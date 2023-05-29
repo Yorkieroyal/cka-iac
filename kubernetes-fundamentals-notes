@@ -1,0 +1,3196 @@
+lfs-258 (CKA)
+
+====================================================================
+Monday 6th June 2022
+====================================================================
+
+Section 2 Basics of kubernetes:-
+
+containerisation is a simple concept is a simple concept, however connection containers across hosts, deployment,
+scaling without downtime ansd servies discovery are differnt matters.  
+
+Kubernetes addresses those challanges. - " Kubernetes is a system for automated scaling and deployment, and management of containerised applications"
+it takes the challanges of a large server with a single applcaition by createing lots of small, dediacted servers
+( or containers) as microservies and spliiting the large applciation in to smaller componebts that can be housed in thier own container.
+manipulation of the containers is API driven allowing for flexability.
+
+The architecture is in section 3.
+
+Orchestration happens in watch loops, monerting the apiserver for changes in the declared state.
+
+deployment --> replicsets -> pods 
+
+taints and tolerations bias the ochestration of pods away or towards hosts/nodes. I taint you so not to use this resources, unless
+you are tolerated to do so.
+
+ - Installation and configuration
+
+ install and configure tools
+ install a k8s master and grow a cluster
+ configure a network solution
+  - flannal
+  - calico
+  - weavernet
+ highly avialable
+
+ GKE - Google Engine
+ EKS - Amazon Engin
+ AKS - Azure engine
+ Minikube
+ Microk8s
+
+ kubectl is in stalled on my mac
+
+ stephen.peters@stephens-MacBook-Pro ~ % kubectl version -o json
+{
+  "clientVersion": {
+    "major": "1",
+    "minor": "20",
+    "gitVersion": "v1.20.2",
+    "gitCommit": "faecb196815e248d3ecfb03c680a4507229c2a56",
+    "gitTreeState": "clean",
+    "buildDate": "2021-01-13T13:28:09Z",
+    "goVersion": "go1.15.5",
+    "compiler": "gc",
+    "platform": "darwin/amd64"
+  }
+}
+
+stephen.peters@stephens-MacBook-Pro ~ % kubectl version -o json
+{
+  "clientVersion": {
+    "major": "1",
+    "minor": "20",
+    "gitVersion": "v1.20.2",
+    "gitCommit": "faecb196815e248d3ecfb03c680a4507229c2a56",
+    "gitTreeState": "clean",
+    "buildDate": "2021-01-13T13:28:09Z",
+    "goVersion": "go1.15.5",
+    "compiler": "gc",
+    "platform": "darwin/amd64"
+  }
+}
+
+ kubectl config use-context CONTEXT_NAME [options]
+
+  - GKE uses a paid google cloud account and uses commands like:-
+
+   gcloud container clusters create linuxfoundation
+	$ gcloud container clusters list
+	$ kubectl get nodes
+	$ gcloud container clusters delete linuxfoundation 
+
+  - Minikube
+   purpose built single cluster installed like this.
+
+    $ curl -Lo minikube ht‌tps://storage.googleapis.com/minikube/releases/latest/minikube-darwin-amd64
+	$ chmod +x minikube
+	$ sudo mv minikube /usr/local/bin
+	$ minikube start
+	$ kubectl get nodes
+
+	this will start a virtualbox vm			
+
+I will be using virtualbox as the virtualisation layer for my vms.. 
+
+Bare minimums for v1.21.1 are:-
+control node 3 x vCPU 4GRAM and 5Gig OS --> i'm going for 10G 
+worker node 2 x vCPU 2GRAM and 5Gig OS --> i'm going for 10G
+
+Main deployent configurations
+Single Node - all components run on a single node 
+Single Head Multiple Workers - ectd, api, scheduler and controller-manager on single head node
+Multiple head nodes with HA, multiple workers - Multiple head nodes in an HA configuration and multiple workers add more durability to the cluster. The API server will be fronted by a load balancer, the scheduler and the controller-manager will elect a leader (which is configured via flags).
+The etcd setup can still be single node.
+HA etcd, HA head nodes, multiple workers - The most advanced and resilient setup would be an HA etcd cluster, with HA head nodes and multiple workers. Also, etcd would run as a true cluster,
+which would provide HA and would run on nodes separate from the Kubernetes head nodes.
+
+Node when i installed kubernetes later on my / volume ran out of space using 5G
+
+sudo swapon --show ; cat /proc/swaps
+sudo swapoff -a
+free -h #these commands show if swap is used... we do not want it for our deployment 
+
+we also only want one interface per node in our cluster with all VMS in promiscuos node so thy can all speak to each other. 
+
+training materials --> To login use user:LFtrainingand a password of:Penguin2014
+
+or these wget and unzip commands:-
+
+ $ wget https://training.linuxfoundation.org/cm/LFS258/LFS258V2022-03-22SOLUTIONS.tar.xz\--user=LFtraining --password=Penguin2014
+ $ tar -xvf LFS258V2022-03-22SOLUTIONS.tar.xz
+
+ my packer build loaded on docker as the runtime, but in the real world we have other options like cri-o and containerd.
+
+ add a new repo to our node
+
+First, let get root priviledges
+
+$ sudo -i
+
+$ vi /etc/apt/sources.list.d/kubernetes.list
+  deb  http://apt.kubernetes.io/ kubernetes-xenial  main
+
+$ curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add
+
+root@packer01:~# apt-get update
+Hit:1 http://gb.archive.ubuntu.com/ubuntu focal InRelease
+Get:2 http://gb.archive.ubuntu.com/ubuntu focal-updates InRelease [114 kB]
+Get:3 http://gb.archive.ubuntu.com/ubuntu focal-backports InRelease [108 kB]
+Get:4 http://gb.archive.ubuntu.com/ubuntu focal-security InRelease [114 kB]          
+Get:5 https://packages.cloud.google.com/apt kubernetes-xenial InRelease [9,383 B]
+Get:6 https://packages.cloud.google.com/apt kubernetes-xenial/main amd64 Packages [56.5 kB]
+Fetched 402 kB in 1s (429 kB/s)    
+Reading package lists... Done
+
+>>>>> look at the last two entries we added these!! <<<<<< >>>>>>
+
+now from those new repos lets install kubeadm, kubelet and kubectl
+$ apt-get install kubeadm=1.22.1-00 kubelet=1.22.1-00 kubectl=1.22.1-00 -y
+
+now lets mark them as 'Hold'
+
+$ apt-mark hold kubelet kubeadm kubectl
+
+our CNI container network can be flannel, calico or other. we will go with calico 
+so lets get the manafest (config file) in yaml
+
+$ wget https://docs.projectcalico.org/manifests/calico.yaml
+
+we need to set the CIDR, so find and uncomment and set CALICO_IPV4POOL_CIDR, ive used 10.244.0.0/16
+when editing these types of file, check your indenting 
+
+\\\
+            # The default IPv4 pool to create on startup if none exists. Pod IPs will be
+            # chosen from this range. Changing this value after installation will have
+            # no effect. This should fall within `--cluster-cidr`.
+             - name: CALICO_IPV4POOL_CIDR
+               value: "10.244.0.0/16"
+\\\
+
+we need some kinda DNS to point our hostname to its IP, add host ans IP to /etc/hosts
+
+root@packer01:~# cat /etc/hosts
+127.0.0.1 localhost
+192.168.1.<new IP> <hostname> #most be the same as the controlplaneendpoint in the kubeadm.yaml check this as its tripped me up twice.
+#or
+
+hostnamectl set-hostname k8scnode01
+hostnamectl set-hostname k8swnode01
+hostnamectl set-hostname k8swnode02
+hostnamectl
+
+
+now set the cgroupdriver (not totally sure what this is for, but lets go for it)
+
+vi /etc/docker/daemon.json and add
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+
+#i'm finding changing the cgroup driver to systemd very flakey, post reboot it can go back to
+#cgroupfs, the workaround is to update the daemon.json with an error, reload the daemon, and stop
+#reload docker, when it errors, remove the error in the file and do it all again 
+
+#note: the docker service does not appear to use the exec-opts in this file, so i removed the line and added it to the docker service --> 
+vi /lib/systemd/system/docker.service
+#as well as commenting out the original
+
+~~~
+ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --exec-opt native.cgroupdriver=systemd
+~~~
+https://www.ibm.com/docs/en/cloud-private/3.1.1?topic=ts-changing-cgroup-driver-systemd-red-hat-enterprise-linux
+
+
+now start and check the service
+#systemctl clean docker
+systemctl stop docker.socket
+systemctl stop docker
+systemctl daemon-reload
+systemctl start docker.socket
+systemctl start docker
+#the next one is optional 
+systemctl restart docker; sleep 20; systemctl status docker
+
+#minimum commands to move cgroup driover from cgroupfs to systemd
+
+systemctl stop docker.socket
+systemctl start docker.socket
+
+#try and get the docker service running after a reboot
+sudo systemctl enable docker.service
+sudo systemctl disable docker.service
+ls /lib/systemd/system/*.service
+ls /etc/systemd/system/*.service
+sudo systemctl enable docker.service
+
+
+now we need to create the kubeadm config to work with Docker
+
+vi kubeadm-config.yaml
+
+apiVersion: kubeadm.k8s.io/v1beta2
+kind: ClusterConfiguration
+kubernetesVersion: 1.22.1               #<-- Use the word stable for newest version
+controlPlaneEndpoint: "k8scnode01:6443"  #<-- Use the node alias not the IP, we set this in the /etc/hosts or wide DNS
+networking:
+  podSubnet: 10.244.0.0/16 #<-- same as our calico yaml
+
+#now lets reference that config with the kubeadm init command
+#try adding the switch --cidr range and controlplaen end point at the command line isntead of the yaml file
+kubeadm init  --config=kubeadm-config.yaml  --upload-certs | tee kubeadm-init.out
+
+#in this example i've stated the kubeadm variables at the command line not via the config yaml
+kubeadm init --control-plane-endpoint=k8scnode01:6443 --pod-network-cidr=10.244.0.0/16  --upload-certs
+
+tee saves the output
+
+ok... not working at this point.. looks like i've no disk space left in /var/lib/docker
+
+$ docker system prune
+$ docker info
+$ df -h show / at 100% of 4.1 G
+$ systemctl status kubelet
+$ journalctl -xeu kubelet
+$ kubeadm reset 
+$ rm -rf /etc/cni/net.d
+iptables --list
+iptables --flush KUBE-FIREWALL
+iptables --delete-chain KUBE-FIREWALL
+iptables --flush KUBE-EXTERNAL-SERVICES
+iptables --flush KUBE-FIREWALL
+iptables --flush 
+iptables --flush KUBE-FIREWALL
+iptables --flush KUBE-FORWARD
+iptables --flush KUBE-SERVICES
+iptables --list
+iptables -X KUBE-EXTERNAL-SERVICES
+iptables -X KUBE-FIREWALL
+iptables -X KUBE-FORWARD
+iptables -X KUBE-KUBELET-CANARY
+iptables -X KUBE-NODEPORTS
+iptables -X KUBE-PROXY-CANARY
+iptables -X KUBE-SERVICES
+
+
+#check cgroup driver in kubeadm / kubelet v the docker deamon via docker info.. they need to match.  
+
+#some things i tried that didn't work
+
+i added this to the kubeadm-config.yaml...
+
+---
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+cgroupDriver: systemd
+
+ i'm not sure if it worked, 
+
+and this 
+
+Environment="KUBELET_EXTRA_ARGS=--cgroup-driver=systemd"
+
+to /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+
+as in https://www.devopsschool.com/blog/how-to-change-the-cgroup-driver-from-cgroupfs-systemd-in-docker/
+
+#set the user env to use the kubeconfig generated at init. 
+#Run a regular user, so exit out of root privildges 
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+#get the calico config in the regular users dir
+
+sudo cp /root/calico.yaml .
+kubectl apply -f calico.yaml 
+sudo apt-get install bash-completion -y
+
+====================================================================
+Monday 18th July 2022
+====================================================================
+
+#when you run kabeadm init, they process spits out a join token and addition nodes get the chance to join the cluster via more kubeadm
+#commands, however they expire afyer a while. Use these to see th status and create new ones
+
+#Lab 3.2 grow the cluster
+
+#any worker nodes need the same level of build that the control node required, so just run the same process from above. 
+
+1. change the hostname
+2. systemctl docker and docker.socket stop and start, with the daemon reload
+3. run the service
+4. vi /etc/hosts to add the cpnode to DNS
+5. sudo swapoff -a
+6. kubeadm join
+
+current example --> kubeadm join k8scnode01:6443 --token ve9bv2.jm71az8uluiwnrus \
+	--discovery-token-ca-cert-hash sha256:95a22a84f4c8ddeda5996c8ce35bdc44e143e477dd7bfadae23f6dea60bd9842
+
+#back on the cp node
+sudo kubeadm token create 
+openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //' 
+
+#in this example these outputs are generated 
+
+packer@packer01:~$ sudo kubeadm token list
+TOKEN                     TTL         EXPIRES                USAGES                   DESCRIPTION                                                EXTRA GROUPS
+lf81a6.m973du9xu0dwk10c   1m          2022-07-18T19:16:39Z   <none>                   Proxy for managing TTL for the kubeadm-certs secret        <none>
+nxpye3.yer8g6n4m16sy9ym   22h         2022-07-19T17:16:39Z   authentication,signing   <none>                                                     system:bootstrappers:kubeadm:default-node-token
+packer@packer01:~$ openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
+16835a4c9fe9725838d5ecfb047aecb91127de039d3fddf6db104f7d94157d96
+
+#back on the worker node
+sudo -i 
+kubeadm join --token <from above> k8scnode01:6443 --discovery-token-ca-cert-hash sha256<from above>
+
+#if you get an error about swap, turn it off with
+sudo swapoff -a 
+
+#if you need to change the hostname from the packer build
+hostnamectl set-hostname new-hostname
+hostnamectl
+
+we now have 2 nodes in our cluster, however the master is tainted to stop none infrastructure pods running here
+to change that taint use
+kubectl taint nodes --all node-role.kubernetes.io/master-
+
+kubectl describe node | grep -i taint 
+
+#lab 3.3 Finsih cluster set up 
+
+#here we untaint the control node to allow none infrastructure pods to be scheduled there. 
+
+kubectl describe node | grep -i taint
+Taints:             node-role.kubernetes.io/master:NoSchedule
+Taints:             <none>
+Taints:             <none>
+
+kubectl taint nodes --all node-role.kubernetes.io/master-
+node/k8scnode01 untainted
+taint "node-role.kubernetes.io/master" not found
+taint "node-role.kubernetes.io/master" not found
+
+
+kubectl describe node | grep -i taint
+Taints:             <none>
+Taints:             <none>
+Taints:             <none>
+
+
+kubectl describe node k8scnode01 
+
+kubectl get pods --all-namespaces
+#this will list all the pods i all the namespces and their state. If you want to delete one
+#take the name and add to the pod delete command
+
+kubectl -n kube-system delete pod coredns-78fcd69978-krwdn
+
+#run an ip a to see the interfaces. There will be a tunl0 to support ipip (ip in ip)
+and cali ones 
+
+kubectl cluster-info dump
+
+#lab 3.4 deploy a simple application 
+we can do this with a simple deployment. A deployment is kuberneted object that deploys an application in a container.
+we can declare our desired state for the applciation in the config yamls 
+A deployment controls replica sets, and in turn the replica sets control the amount of pods
+declared.
+
+kubectl create deployment nginx --image=nginx
+kubectl get deployment
+kubectl get deployment nginx
+
+kubectl describe deployment nginx <-- give some good detail on the deployment
+kubectl get events <--  gives a bit more detail on what has happedned on the cluster. 
+kubectl get events -o wide <-- gives us a slightly more verbose output
+
+kubectl get deployment nginx -o yaml <-- will give us the deployment yaml, we can use this as a template to create again or others.
+kubectl get deployment nginx -o yaml > first.yaml
+vi first.yaml
+  - remove creationtimestap, resourceversion and uuid. plus status and all below it
+  - we now have a deployment yaml.
+
+
+~~~
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+  generation: 1
+  labels:
+    app: nginx
+  name: nginx
+  namespace: default
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: nginx
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - image: nginx
+        imagePullPolicy: Always
+        name: nginx
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+
+      ~~~
+   
+kubectl create -f first.yaml #the file above
+
+#another way of generating the yaml or json is to use the dry-run flag
+
+kubectl create deployment two --image=nginx --dry-run -o yaml
+kubectl create deployment two --image=nginx --dry-run -o json
+kubectl create deployment two --image=nginx --dry-run -o yaml > myfile.yaml
+kubectl create deployment two --image=nginx --dry-run -o json > myfile.json
+
+
+#a kubernetes service will expose the nginx
+
+~~~
+Looks up a deployment, service, replica set, replication controller or pod by name and uses the selector for that
+resource as the selector for a new service on the specified port. A deployment or replica set will be exposed as a
+service only if its selector is convertible to a selector that service supports, i.e. when the selector contains only
+the matchLabels component. Note that if no port is specified via --port and the exposed resource has multiple ports, all
+will be re-used by the new service. Also if no labels are specified, the new service will re-use the labels from the
+resource it exposes.
+~~~
+
+after an overnight break i noticed lots of pods where showing as status evicted. With a message disk pressure.
+
+status:
+  message: 'Pod The node had condition: [DiskPressure]. '
+  phase: Failed
+  reason: Evicted
+  startTime: "2022-10-10T08:26:27Z"
+
+To delete these is ran these commands
+
+kubectl get pods -n nginx --field-selector=status.phase=Failed
+kubectl delete pods -n nginx --field-selector=status.phase=Failed
+
+
+kubectl expose -n nginx deployment/nginx
+error: couldn't find port via --port flag or introspection
+See 'kubectl expose -h' for help and examples
+
+we get this as we have not decalared a port, so with in the deployment yaml we need to add the lines that declare the port
+In the yaml, at the image name add these three lines, ports; containerPort; protocol 
+
+spec:
+      containers:
+      - image: nginx
+        imagePullPolicy: Always
+        name: nginx
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        resources: {}
+
+You can delete the existing deployment and create with the updates yaml, or overwrite the updated yaml with kubectl replace -f first.yaml
+
+then run the expose again..
+
+kubectl expose -n nginx deployment/nginx
+
+now see what is exposed with the get service and get ep (endpoint) command
+
+kubectl get service,ep -n nginx nginx
+NAME            TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+service/nginx   ClusterIP   10.96.127.79   <none>        80/TCP    2m31s
+
+NAME              ENDPOINTS          AGE
+endpoints/nginx   10.244.87.131:80   2m31s
+
+Our pod is running on k8swnode02
+
+kubectl get pod -n nginx -o wide
+NAME                     READY   STATUS    RESTARTS   AGE   IP              NODE         NOMINATED NODE   READINESS GATES
+nginx-7848d4b86f-c9nkl   1/1     Running   0          11m   10.244.87.131   k8swnode02   <none>           <none>
+
+lets put a tcpdump there
+
+if we connect to port 80 on the Cluster IP we get a response, and a response on the End Point. Either way the tcpdump will show a destination address of the End Point.
+
+lets scale the deployment
+
+kubectl scale deployment -n nginx nginx --replicas=3
+
+kubectl get pod -n nginx 
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-7848d4b86f-c9nkl   1/1     Running   0          24m
+nginx-7848d4b86f-fq4zh   1/1     Running   0          33s
+nginx-7848d4b86f-srmtt   1/1     Running   0          33s
+
+If we look at the Cluster IP and End points again we see that we have two more End Points, but still one cluster ID
+
+kubectl get service,ep -n nginx nginx
+NAME            TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+service/nginx   ClusterIP   10.96.127.79   <none>        80/TCP    22m
+
+NAME              ENDPOINTS                                           AGE
+endpoints/nginx   10.244.222.1:80,10.244.40.132:80,10.244.87.131:80   22m
+
+Notice what happens when we delete a pod
+
+acker@k8scnode01:~$ kubectl get pod -n nginx -o wide
+NAME                     READY   STATUS    RESTARTS   AGE     IP              NODE         NOMINATED NODE   READINESS GATES
+nginx-7848d4b86f-c9nkl   1/1     Running   0          26m     10.244.87.131   k8swnode02   <none>           <none>
+nginx-7848d4b86f-fq4zh   1/1     Running   0          2m44s   10.244.222.1    k8swnode01   <none>           <none>
+nginx-7848d4b86f-srmtt   1/1     Running   0          2m44s   10.244.40.132   k8scnode01   <none>           <none>
+packer@k8scnode01:~$ 
+packer@k8scnode01:~$ kubectl delete pod -n nginx nginx-7848d4b86f-c9nkl
+pod "nginx-7848d4b86f-c9nkl" deleted
+packer@k8scnode01:~$ kubectl get pod -n nginx -o wide
+NAME                     READY   STATUS    RESTARTS   AGE     IP              NODE         NOMINATED NODE   READINESS GATES
+nginx-7848d4b86f-7jrfn   1/1     Running   0          5s      10.244.87.132   k8swnode02   <none>           <none>
+nginx-7848d4b86f-fq4zh   1/1     Running   0          5m37s   10.244.222.1    k8swnode01   <none>           <none>
+nginx-7848d4b86f-srmtt   1/1     Running   0          5m37s   10.244.40.132   k8scnode01   <none>           <none>
+
+
+A new POD springs up on a new End Point.
+
+You can alos expose the PODs by setting the type as LoadBalancer
+
+kubectl delete service nginx -n nginx
+service "nginx" deleted
+
+kubectl expose deployment nginx -n nginx --type=LoadBalancer
+service/nginx exposed
+
+kubectl get service nginx -n nginx
+NAME    TYPE           CLUSTER-IP   EXTERNAL-IP   PORT(S)        AGE
+nginx   LoadBalancer   10.106.0.8   <pending>     80:32293/TCP   4s
+
+Notice the Extra Port, in this case 32293, the cluster hosts are now listening on tcp/32293, any connection to any host on that port will map it to port 80 on the POD. In the previous example (Type ClusterIP our connections originated from within the cluster not external to it)
+
+Whilst there is a POD available nginx will work, scaling more will Load Balance across the End Points.
+
+When it comes to deleting the resources, we need to delete the resource and the EP and the Services, as they would remain
+
+if vbox is in Nat Network modem=, then we need to point into the cluster from a port forward
+
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "nginx:tcp:[127.0.0.1]:8080:[10.0.2.82]:32293"
+
+would linh to our exposed port.
+
+
+====================================================================
+Tuesday 15th November 2022
+====================================================================
+
+Section 4: KUBERNETES ARCHITECTURE
+
+The architecture is made up of
+control plane node(s) and worker node(s)
+operatores
+services
+pods in containers
+namespaces and quotas
+netwroking and policies 
+storeage
+
+APi calls to thrse operators network plufs in like weave or cakico allow these APi calls to ove between nodes
+
+#kubeadm upgrade plane - will state when versions all the compments will ypgrade to
+#kubectl -n kube-system get cm kubeadm-config -o yaml give us th econfig map fro kubeadm
+
+the control plan run on the control nodes, a quick look in ls -rtla /etc/kubernetes/manifests/ lists the yamls that support pods needed for the system
+
+kube-apiserver
+kube-scheduler
+etcd database
+kube/cloud controllers
+coredns
+
+Worker nodes also have system compenents 
+
+kube-proxy
+calico (our cni plugin)
+
+kubelet runs a systemd process ... see this systemctl process
+
+packer@k8scnode01:~$ systemctl status kubelet
+● kubelet.service - kubelet: The Kubernetes Node Agent
+     Loaded: loaded (/lib/systemd/system/kubelet.service; enabled; vendor preset: enabled)
+    Drop-In: /etc/systemd/system/kubelet.service.d
+             └─10-kubeadm.conf
+     Active: active (running) since Tue 2022-11-15 07:56:05 UTC; 6 days ago
+       Docs: https://kubernetes.io/docs/home/
+   Main PID: 7677 (kubelet)
+      Tasks: 19 (limit: 4611)
+     Memory: 91.7M
+     CGroup: /system.slice/kubelet.service
+             └─7677 /usr/bin/kubelet --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf --config=/var/lib/kubelet/config.yaml --network-plugin=cni --pod-infra-container-image=k8s.gcr
+
+kube-apiserver chats wiy kubelet to create whats need on each node 
+
+
+operatores are controllers or watch loops, services are an operators that loops/loisten to the endpoint operator tpo provide an IP address for each pod, so handels connection pods to gesgrer, exposing pods ti the internet, decoupl settings ans define pod access policy.
+
+Pods contain container(s) all with a single IP addesss fro that POD . Init Containers control the order of starting containers of needed in certain orders. Side card containers may help the applciation container running in that pod
+
+look in a podspec and you can see the initcontainer 
+
+only the kube-apiserver speakes to and from etcd
+, ertcdctl and calicoctl are great tools look at the db and the networking
+
+LAB 4.1 Basic Node maintainace 
+
+ETCD - the data directory is here : /etc/kubernetes/manifests/etcd.yaml and in that is the location if the etcd daemon
+
+cat /etc/kubernetes/manifests/etcd.yaml | grep data-dir
+    - --data-dir=/var/lib/etcd
+
+lets get the shell of the etcd container -  kubectl exec -it etcd-k8scnode01 -n kube-system -- sh
+
+then lets try etcdctl command thats installed as part of that etcd container
+
+kubectl exec -it etcd-k8scnode01 -n kube-system -- sh -c "ETCDCTL_API=3 ETCDCTL_CACERT=/etc/kubernetes/pki/etcd/ca.crt ETCDCTL_CERT=/etc/kubernetes/pki/etcd/server.crt ETCDCTL_KEY=/etc/kubernetes/pki/etcd/server.key 
+\ etcdctl endpoint health"
+127.0.0.1:2379 is healthy: successfully committed proposal: took = 7.361062ms
+
+we need to use the etcd certs to run this command. thats why is has all thos vards pointing to crts in etcd files we see in the container
+
+then next examples will just list the etcdctl command, bit the exec stuff will be prepended in real life.
+
+etcdctl --endpoints=https://127.0.0.1:2379 member list
+9261e3b3414a7c2f, started, k8scnode01, https://10.0.2.82:2380, https://10.0.2.82:2379, false
+
+etcdctl --endpoints=https://127.0.0.1:2379 member list -w table
++------------------+---------+------------+------------------------+------------------------+------------+
+|        ID        | STATUS  |    NAME    |       PEER ADDRS       |      CLIENT ADDRS      | IS LEARNER |
++------------------+---------+------------+------------------------+------------------------+------------+
+| 9261e3b3414a7c2f | started | k8scnode01 | https://10.0.2.82:2380 | https://10.0.2.82:2379 |      false |
++------------------+---------+------------+------------------------+------------------------+------------+
+
+etcdctl --endpoints=https://127.0.0.1:2379 snapshot save /var/lib/etcd/snapshot.db 
+
+this places the snap shot on the host node in /var/lib/etcd/snapshot.db     as its mounted there.
+
+UPGRADE The CLUSTER
+
+Need to run Lab 4.2 CPU and memory constrains, and 4.3 resource limits for namespaces 
+
+
+
+
+
+====================================================================
+Tuesday 15th November 2022
+====================================================================
+
+Section 5: APIs and Access
+
+The cluster is API managed via RESTful HTTPS calls, using at some points Annitations, Annitations are strings in meta data
+
+Versions, Alpha, Beta (2 versions there) and stable, which is safe for production. Namspeace seporate resources within the cluster
+
+ - API Access
+
+ The whole architecture is API driven servinf End Points as objects within the cluster that can be administered. The Kube-apiserver manages this API interfaces.
+
+RESTFul uses typical HTTP verbs GET/POST/DELETE, you could manipuaklte this API with basic curl, using the correct certificates and keys, you could pass 
+JSON files.
+
+This is an example:-
+
+curl --cert userbob.pem --key userBob-key.pem  --cacert /path/to/ca.pem https://k8scnode:6443/api/v1/pods
+
+At this point you can use other 'users' pems to test permistions in any RBAC model
+
+- Checking Access
+
+The kubectl auth can-i command can clarify what access you have 
+
+packer@k8scnode01:~$ kubectl auth can-i create deployments --as bob --namespace developer
+no
+packer@k8scnode01:~$ kubectl auth can-i create deployments 
+yes
+
+Three APIs help with setting who and what can be quiried:-
+
+SelfSubjectAccessReview
+LocalSubjectAccessReview
+SelfSubjectRulesReview
+
+- Optermistic Concurrency
+ JSON is used for API call payloads (the data bit) YAML is nnormally conversted from JSON and googles protobuf is very experimental
+
+ Resource versioning is used to lock/unlock between read and being written. If te version cnagnes between a read and write 
+ you get a 409 CONFLICT returned
+
+- Annotations 
+
+Different to Labels, Labels work with objects or collection of objects. Annotations allow metadats to be included with an objects.
+
+and can track information like timstamps, related infromation or even links to the developers email
+
+the annonate api verb allows this to be manipulated
+
+kubectl annotate pods --all description='Production Pods' -n prod 
+kubectl annotate --overwrite pod webpod description="Old Production Pods" -n prod 
+kubectl -n prod annotate pod webpod description-
+
+or in my example:-
+
+kubectl annotate pods --all description='Training Node' -n kube-system
+kubectl annotate --overwrite pods kube-apiserver-k8scnode01 description='Training Nodes ApiServer' -n kube-system
+kubectl annotate pods --all description= -n kube-system  --> will remove them all
+
+- Simple POD 
+
+As we know the lowest compute unit and is often a primary container with supporting Containers.
+
+pod manifests are often in YAML with an API version. Kind, in this case Pod. metatdata, for labels, Annotations and simular.
+The spec defines  what to create and their parameters.
+
+- kubectl (an k8s curl aggregator)
+
+As we know there is an exposed API that handles RESTFul via HTTP, JSON and or XML. Using GET/POST/PATCH/DELETE effect.
+
+try it with verbose
+
+$ kubectl --v=10 get node
+
+.kube/config declares the cluster end point and the certificates and keys needed to interigate the api
+
+- namespace 
+
+Segragation and a means to keeps resources destinct. All API calls declare the default Namespace unless specified otherwise
+
+a k8s install will have the namespaces default (if not specified), kube-node-lease, kube-public (readable by all) and kube-system (infrastructure pods)
+
+in the background, this is whats happening:- 
+curl --cert /tmp/client.pem --key /tmp/client-key.pem  --cacert /tmp/ca.pem -v -X GET ht‌tps://k8scnode01:6443/api/v1/namespaces/default/pods/firstpod/log 
+
+ with the example  GET on the end point /api/v1/namespaces/default/pods/firstpod/log using the certs from the kubeconfig
+
+ - Swagger = open API initative - https://swagger.io/specification/ 
+
+LAB 5.1
+
+$ cat .kube/config , there are three certs and an API Server address, lets pull out the certs into their own variables
+
+export client=$(grep client-cert $HOME/.kube/config | cut -d" " -f 6)
+export key=$(grep client-key-data $HOME/.kube/config | cut -d" " -f 6)
+export auth=$(grep certificate-authority-data $HOME/.kube/config | cut -d" " -f 6)
+
+echo $client | base64 -d > client.pem
+echo $key | base64 -d > client-key.pem
+echo $auth | base64 -d > ca.pem
+
+curl --cert client.pem --key client-key.pem --cacert ./ca.pem https://k8scnode01:6443/api/v1/pods
+
+LAB 5.2
+
+cat curlpod.json
+
+{"kind": "Pod","apiVersion": "v1","metadata":{"name": "curlpod","namespace": "default","labels": {"name": "examplepod"}},"spec": {"containers": [{"name": "nginx","image": "nginx","ports": [{"containerPort": 80}]}]}}
+
+curl --cert client.pem --key client-key.pem --cacert ./ca.pem https://k8scnode01:6443/api/v1/namespaces/default/pods -X POST -H 'Content-Type: application/json' -d@curlpod.json
+
+that curl command POSTs our json manifest to the api end point /pods/ using the certs for authentication.
+
+
+Section 6: API objects
+
+- Overview
+
+  For example, Pods/Services/Deployments these are resources or objects. Alpha --> Beta --> v1
+
+  Daemonset - every node
+
+  autoscale - node or pods based on resources and their utilisation.
+
+  jobs, cronjobs (run at regular intervals) or batch (run once).
+
+- v1 API Group 
+
+  is now a collection of 8 v1 groups 
+
+- Discovering API groups
+
+  AS we saw earlier kubectl is a great wrap around for curl commands to various API end points. 
+  
+  curl https://localhost:6443/apis --header "Authorization: Bearer $token" -k 
+
+  Is an example of of a command that will give all the APIs not the auth token in this example.
+
+- Deploy an Application 
+
+  Using objects Deployment, Replicaset and POD. 
+   - Deployment manages the state of replicasets and the pods within. Good flexability with upgrades and administration.
+   - ReplicaSets looks after the POD lifecycle and updates.
+   - POD As we know the lowest unit we manage. supports App containers and support Containers.
+
+- DaemonSets
+  
+  Single POD of the same type runs on each node in the cluster. If you add new node, a new pod is deployed there as part of the daemonset. Logging , metrics and ecrurity are good examples of daemonset useage. 
+
+- StatefullSets
+
+  manage statefull applications, like a deployment, but eachh pod is treated as unique. Stabel storage and network identity. They are not deployed in parallel.
+
+- Autoscale (Horazontal Pod Austoscalers HPA) Deployes based in percentages of CPU utilisation. Cluster Autoscaler (CA), adds more nodes to the cluster
+An underused node can be removed or a new one added. Works well in the cloud.  
+
+- Jobs part of the batch API group. They can run one off tasks then go or work like cronjobs and are created at intervals to run a task then go. 
+
+- RBAC . An APi group that has 4 resources. ClusterRole, Role, ClusterRoleBinding and RoleBinding
+
+LAB 6.1 RESTful API Access
+
+Run kubectl config view to see the current control node and port running the API /etc/kubernetes/pki/etcd/server.crt
+
+kubectl config view
+kubectl get secrets -A
+kubectl get secrets 
+export token=$(kubectl describe secret default-token-5td8w | grep token: | cut -f7 -d ' ')
+curl https://k8scnode01:6443/apis --header "Authorization: Bearer $token" -k
+
+and now
+
+curl https://k8scnode01:6443/api/v1 --header "Authorization: Bearer $token" -k
+
+curl https://k8scnode01:6443/api/v1/namespaces --header "Authorization: Bearer $token" -k
+
+will fail RBAC as our token is a serviceaccount no allowed to look at the namespaces resource.  
+
+Certificates are made available to a pod in the /var/run/secrets/kubernetes.io/serviceaccount/ folder.
+
+kubectl run -i -t busybox --image=busybox --restart=Never
+If you don't see a command prompt, try pressing enter.
+/ # 
+/ # 
+/ # ls /var/run/secrets/kubernetes.io/serviceaccount/
+ca.crt     namespace  token
+/ # cat /var/run/secrets/kubernetes.io/serviceaccount/token 
+eyJhbGciOiJSUzI1NiIsImtpZCI6Im82UE1obDRVXzBBb0ZjbkZOVUdLOTJvRTNDeFU0  <cut> 
+
+LAB 6.2 using a proxy.
+
+The proxy vcan run from a node or within n a POD through the use of a sidecar. 
+
+ kubectl proxy --api-prefix= &
+
+ This run the sidecar proxy in the background, use kill <process id> to remove it 
+  
+  starting to serve on 127.0.0.1:8001
+
+Now curl the new end point /api
+
+{
+  "kind": "APIVersions",
+  "versions": [
+    "v1"
+  ],
+  "serverAddressByClientCIDRs": [
+    {
+      "clientCIDR": "0.0.0.0/0",
+      "serverAddress": "10.0.2.110:6443"
+    }
+  ]
+}
+
+
+curl http://127.0.0.1:8001/api/v1/namespaces
+
+~
+output omitted
+~
+
+6.3 Working with Jobs
+
+cat job.yaml 
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sleepy
+spec:
+  template:
+    spec:
+      containers:
+      - name: resting
+        image: busybox
+        command: ["/bin/sleep"]
+        args: ["3"]
+      restartPolicy: Never
+
+kubectl create -f job.yaml
+kubectl describe jobs.batch sleepy
+
+basicly creates a pod with busybox image, runs the command /bin/sleep 3
+after that command is run the job completes and the pod goes to status completed 
+
+packer@k8scnode01:~$ kubectl get pods -A
+NAMESPACE     NAME                                       READY   STATUS      RESTARTS   AGE
+default       sleepy-28skp                               0/1     Completed   0          8m20s
+default       sleepy1-j9v9k                              0/1     Completed   0          2m29s
+kube-system   calico-kube-controllers-69f595f8f8-9zjdx   1/1     Running     0          34m
+kube-system   calico-node-dd56f                          1/1     Running     0          31m
+kube-system   calico-node-fmp7z                          1/1     Running     0          27m
+~ 
+
+
+
+
+====================================================================
+Tuesday 23th January 2023
+====================================================================
+
+Section 7 Managing State with Deployments
+
+A deployment is defined in a YAML or JSON file and creates a replicaset and pod with the components needed to create rthe containers. 
+new replicasets under the deployemnt can be created with the changes specified in apply or edit.. you can roll between the replicasets if you need to. 
+
+Labels cna group stuff together as key:values pairs 
+
+- Deployments 
+They replaced replication controllers and are allow server side updates 
+
+kubectl create deployment steve-dev --image=nginx:1.13.7-alpine
+
+- object relationship 
+From the container, which is the docker image, to the pod where the container lives and is watched over by a watch loop and compared with the pod spec to remove or creatd based on that spec
+Te replicaset ensures the right number od puds are running. Te deployement works with other replicasets if there is a version upgrade in progress 
+
+kubectl get deployments,rs,pods -o yaml   --> this is now a list of objects 
+
+Some objects in the yaml file use apiversion v1 = stable, the items in the list the command is showing.
+As this is a list the first item is Deployment and with an apiversion of apps/v1.
+
+The metadata are things like annotations and labels and other non configurable information. Some metadate is obvious, but generations is how many times the object has been changed.
+Resource version is linked to etcd and any chnages there will cause this number to change. 
+
+The Spec as a declaration that the following items will configure the object being created. 
+progressDeadlineSeconds = how long till there is an error reported
+Replicas = Yes, you've guesed it... how many pods are required at that moment in time. Edit to increase or decrease.
+revisionHistoryLimit = what to retain for rollback
+selector = pods that match the labels will be the ones deployed, if there are two, then the pod will need these two to be deployed.
+stratergy = controls whats there and not there during an update. the type tells us the type up update... Rollingupdate in outr case 
+
+Template = This is passes to the replicaset to allow it toi know what and how to deploy. Containers will list the image needed to be pulled from the
+repo of local cache, give it a name, pull policy, resources, termination message path and policy, dnspolicy whicj is coreDNS or the node's resolv.conf,
+restart policy restsrt or be killed, how to schedule if its custome or used the ddefault scheduler, securitycontext and terminationgraceperiod used to wait between SIGTERM and SIGKILL.
+
+Deployment configurationstatus = how many were are, ready and some timestamps 
+
+Scale and Rolling updates, we can scale with an edit to the deploymetn yaml or via kubectl.
+
+kubectl scale deployment steve-dev --replicas=4
+
+This would trigger a rolling update of the deployment. While the deployment would show an older age,
+a review of the Pods would show a recent update and older version of the web server application deployed.
+
+rollbacks allow us to roll back to previous versions. k8s keeps the version history. We can use the --record flag to to annotate. 
+And the kuebctl rollout command to work with versions.
+
+Labels = Part of the metadata, but not objects in their own right, used toselect objects bsaed on an arbitary string, regardless od object type.
+It is immutable after it is created. 
+
+kubectl get pods -A --show-labels
+kubectl get pods -A -l=app=steve-dev
+kubectl get pods -A -L app
+
+yuo can also add labels on the fly .. 
+
+kubectl label pods --all -A status=section-7
+kubectl label pods --all -n default ns=tuesday
+
+LAB 7.1  - Working with replicasets 
+
+# create the yaml needed for the RS
+vi rs.yaml
+
+apiVersion: apps/v
+kind: ReplicaSet
+metadata:
+  name: rs-one
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      system: ReplicaOne
+  template:
+    metadata:
+      labels:
+        system: ReplicaOne
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.15.1
+        ports:
+        - containerPort: 80
+
+#create the rs from that yaml
+kubectl create -f rs.yaml
+
+#we can see the desired state
+kubectl describe rs rs-one
+
+#and running pods
+kubectl get pods 
+
+#we can delete the rs, but not the pods 
+kubectl delete rs rs-one --cascade=orphan
+
+#there is no rs, but the pods are there
+kubectl describe rs rs-one
+kubectl get pods
+
+#create the rs again, if the matchlabels stay the same they'll take ownership of the pods again 
+kubectl create -f rs.yaml
+kubectl get rs rs-one
+kubectl get pods
+
+#we can isolate one of the pods by changing the label
+kubectl edit pod rs-one-8dpqw
+
+template:
+    metadata:
+      labels:
+        system: ReplicaOne --> IsolatedPod
+
+
+# there are now 3 pods, two looked after by the replicaset and one on its own.
+kubectl get pods 
+kubectl get rs rs-one
+
+#if we delete the rs, the two pods controlled by the rs will go, leavinf the one with the changed label.
+kubectl delete rs rs-one
+kubectl get pods 
+kubectl get rs rs-one
+
+#we can remove the last pod by its label
+kubectl delete pod -l system=IsolatedPod
+
+#now they are all gone
+kubectl get rs rs-one
+kubectl get pods  
+
+LAB 7.2 Working with daemonSets 
+
+kubectl create -f ds.yaml 
+
+~ 
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ds-one
+spec:
+  selector:
+    matchLabels:
+      system: DaemonSetOne
+  template:
+    metadata:
+      labels:
+        system: DaemonSetOne
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.15.1
+        ports:
+        - containerPort: 80
+~ 
+
+#there will be one for each node 
+
+LAB 7.3 Rolling updates and rollbacks 
+
+#using the ds from before what is the update stratergy?
+
+kubectl get ds ds-one -o yaml | grep -A 4 Strategy # that grep gets us the match and the 4 following lines.
+
+updateStrategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+
+#lets change te type to OnDelete 
+
+#then set the image to a different version
+kubectl set image ds ds-one nginx=nginx:1.16.1-alpine 
+
+#at this point the image is unchanged 
+kubectl describe pod ds-one-brqqg | grep Image:
+    Image:          nginx:1.15.1
+
+#Then delete the pod that we chagned the image on .
+kubectl delete pod ds-one-brqqg
+
+#The DS will create a new one, but at the ds image was changed, and the updatestrat is ondelete, the new pod has the new image.
+kubectl describe pod ds-one-2kfzw | grep Image:
+    Image:          nginx:1.16.1-alpine
+kubectl describe pod ds-one-rjrpj  | grep Image:
+    Image:          nginx:1.15.1
+
+#things have changed, so we can ccheck the rollout history
+kubectl rollout history ds ds-one 
+daemonset.apps/ds-one 
+REVISION  CHANGE-CAUSE
+1         <none>
+2         <none>
+
+kubectl rollout history ds ds-one --revision=1
+daemonset.apps/ds-one with revision #1
+Pod Template:
+  Labels:       system=DaemonSetOne
+  Containers:
+   nginx:
+    Image:      nginx:1.15.1
+    Port:       80/TCP
+    Host Port:  0/TCP
+    Environment:        <none>
+    Mounts:     <none>
+  Volumes:      <none>
+
+kubectl rollout history ds ds-one --revision=2
+daemonset.apps/ds-one with revision #2
+Pod Template:
+  Labels:       system=DaemonSetOne
+  Containers:
+   nginx:
+    Image:      nginx:1.16.1-alpine #<-- Here 
+    Port:       80/TCP
+    Host Port:  0/TCP
+    Environment:        <none>
+    Mounts:     <none>
+  Volumes:      <none>
+
+#we can undo the rollout and move back to revision 1, as the type is OnDelete, we'll need to delete the pod to get it to respawn with the old image.
+kubectl describe pods ds-one-2kfzw | grep Image:
+kubectl delete pods ds-one-2kfzw 
+kubectl get pods -l system=DaemonSetOne
+kubectl describe pods ds-one-vqrr7 | grep Image:
+    Image:          nginx:1.15.1
+
+#lets explore another update type
+kubectl get ds ds-one -o yaml > ds1.yaml
+vi ds1.yaml 
+
+~ 
+name: ds-two
+~ 
+ updateStrategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+~ 
+
+kubectl create -f ds1.yaml
+kubectl describe pods -l system=DaemonSetTwo | grep Image:
+kubectl describe pods -l system=DaemonSetOne | grep Image:
+
+#both ds use the smae image at the moment.
+#lets update the image used in the ds DaemonSetTwo
+
+kubectl get ds ds-two -o yaml | grep containers: -A 3
+      containers:
+      - image: nginx:1.15.1
+        imagePullPolicy: IfNotPresent
+        name: nginx 
+
+#edit the configuration to the new image
+kubectl edit ds ds-two 
+
+      - image: nginx:1.15.1   -->           - image: nginx:1.16.1-apline
+
+#as its a rolling update these will pull from docker or the cache instantly 
+
+kubectl describe pods -l system=DaemonSetTwo | grep Image:
+    Image:          nginx:1.16.1-apline
+    Image:          nginx:1.16.1-apline
+    Image:        nginx:1.16.1-apline
+
+
+
+
+====================================================================
+Friday 27th January 2023
+====================================================================
+
+Section 8 Volumes and Data
+
+Volumes re deeclared in the POD specification. Namer/type/mount Point. Same volume can m=be made available to multiple containers in a pod, and multiple pods.
+
+There appears to be many storage types available, like 'emptyDir' Kubelet will create the directory in the container, but not mount any storage thus data stays in the 
+shared container space and would not be persistant. When the POD goes, so does the storage and data.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fordpinto 
+  namespace: default
+spec:
+  containers:
+  - image: simpleapp 
+    name: gastank 
+    command:
+    - sleep
+    - "3600"
+    volumeMounts:
+    - mountPath: /scratch
+      name: scratch-volume
+  volumes:
+  - name: scratch-volume
+    emptyDir: {}
+
+
+in this example a container creates a volumer called scratch-volume as /scratch in side the container.
+
+some storage Volume types are:- 
+
+AWS - GCEpersistentDisk and awsElasticBlockStore  use GCE oe EBS if you have them accounts
+
+emptyDir and hostPath are easy to set up. hostPath mounts a resource from the host filesytem. 
+DirectOrCreate and FileOrCreate wull actulally create the resources if they are not already present. 
+
+Shared Volume Example - 
+
+....
+   containers:
+   - name: alphacont
+     image: busybox
+     volumeMounts:
+     - mountPath: /alphadir
+       name: sharevol
+   - name: betacont
+     image: busybox
+     volumeMounts:
+     - mountPath: /betadir
+       name: sharevol
+   volumes:
+   - name: sharevol
+     emptyDir: {}   
+
+Now, take a look at the following commands and outputs:
+
+$ kubectl exec -ti exampleA -c betacont -- touch /betadir/foobar
+$ kubectl exec -ti exampleA -c alphacont -- ls -l /alphadir
+
+creating a file in container a will make it readablke to container b via thhe volume sharevol ..
+
+Persistant Volumes (PV) and claims (PVC)  - Abstracted storage retaining data longer thatn the pod using it. We define parameters like size and the backend storage type 
+with the term storageClass. From there the cluster attaches the persitantVolume.
+
+Kubernetes will dynaically use volumes that are available, irrospactiuve of type alolwoig claims to any backend storage. 
+
+PVC phases are:-
+Provision
+Bind 
+Use 
+Release 
+Reclaim 
+
+
+Secrets - 
+
+
+LAB 8.1 create a config  map  
+
+https://kubernetes.io/docs/concepts/storage/volumes/#types-of-volumes 
+
+A configMap can ingest data in 3 ways, key:value pairs, a file or a directory of files 
+
+lets create a directory and three files in that dir on out main control node. 
+
+mkdir primary
+echo c > primary/cyan
+echo m > primary/magenta
+echo y > primary/yellow
+echo b > primary/black
+echo k > primary/black
+echo "known as key" >> primary/black 
+echo blue > favorite
+
+kubectl create configmap colors --from-literal=text=black --from-file=./favorite --from-file=./primary/
+
+kubectl get cm colors -o yaml
+
+apiVersion: v1
+data:
+  black: |
+    k
+    known as key
+  cyan: |
+    c
+  favorite: |
+    blue
+  magenta: |
+    m
+  text: black
+  yellow: |
+    y
+kind: ConfigMap
+~ 
+
+let create a super simple pod that will use that config map 
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shell-demo
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    env:
+    - name: ilike
+      valueFrom:
+        configMapKeyRef:
+          name: colors
+          key: favorite 
+
+kubectl exec shell-demo -- /bin/bash -c 'echo $ilike'
+blue
+
+simply put, our pod has been created setting env the value 'ilike' from our config map 'colors'.
+The key is favourite and value we set in that file is  
+
+we can also bring in all the values in the config map if we use envFrom instead of env
+
+   envFrom:
+    - configMapRef:
+        name: colors
+
+kubectl exec shell-demo -- /bin/bash -c 'env'
+
+black=k
+known as key
+
+cyan=c
+
+yellow=y
+
+text=black
+
+favorite=blue
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+NGINX_VERSION=1.23.3
+magenta=m
+
+_=/usr/bin/env
+
+that last config map was created at the command line, this we will create using a yaml file. 
+
+apiVersion: v1
+kind: ConfigMap
+metaData:
+  name: fast-car
+  namespace: default
+data:
+ car.make: mini
+ car.model: cooper
+ car.trim: red
+
+ lets make that available to the pod as a mounted volume 
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shell-demo
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    volumeMounts:
+    - name: car-vol
+      mountPath: /etc/cars
+  volumes:
+   - name: car-vol
+     configMap:
+       name: fast-car
+
+once tat is running we'll see that we have mounbted the config map 
+
+kubectl exec shell-demo -- /bin/bash -c 'df -ha | grep car'
+
+/dev/mapper/ubuntu--vg-ubuntu--lv  7.8G  5.2G  2.3G  70% /etc/cars
+
+kubectl exec shell-demo -- /bin/bash -c 'ls -rtla /etc/cars'
+total 16
+lrwxrwxrwx 1 root root   15 Jan 29 15:49 car.trim -> ..data/car.trim
+lrwxrwxrwx 1 root root   16 Jan 29 15:49 car.model -> ..data/car.model
+lrwxrwxrwx 1 root root   15 Jan 29 15:49 car.make -> ..data/car.make
+lrwxrwxrwx 1 root root   31 Jan 29 15:49 ..data -> ..2023_01_29_15_49_28.070564656
+drwxr-xr-x 2 root root 4096 Jan 29 15:49 ..2023_01_29_15_49_28.070564656
+drwxrwxrwx 3 root root 4096 Jan 29 15:49 .
+drwxr-xr-x 1 root root 4096 Jan 29 15:49 ..
+
+packer@k8scnode01:~$ kubectl exec shell-demo -- /bin/bash -c 'cat /etc/cars/car.*'
+
+minicooperred
+
+Lab 8.2 - create a Persistant NFS Volume 
+
+The objective is to share a NFS volume across all the nodes to utilse in the next lab. Install the NFS packages and create the file structure.
+
+
+sudo apt-get update && sudo apt-get install -y nfs-kernel-server
+sudo mkdir /opt/sfw
+sudo chmod 1777 /opt/sfw/
+sudo bash -c 'echo software > /opt/sfw/hello.txt'
+
+sudo vi /etc/exports
+
+and append this as the last line 
+/opt/sfw/ *(rw,sync,no_root_squash,subtree_check)
+
+sudo exportfs -ra
+
+on the other nodes, install the nfs-common, see whats mountable on the cpnode and mount it at /mnt  
+
+sudo apt-get -y install nfs-common
+showmount -e k8scnode01
+mount k8scnode01:/opt/sfw /mnt
+
+create the Persistant Volume by applying a yaml file with the resource kind: PersistantVolume 
+
+https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pvvol-1
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    path: /opt/sfw
+    server: k8scpnode01   #<-- Edit to match cp node
+    readOnly: false
+
+kubectl create -f pv.yaml 
+kubectl get pv
+
+
+
+lab 8.3 create the  PVC 
+
+The object is PersistantVolumeClaim 
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-one
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 200Mi
+
+
+kubectl apply -f pvc.yaml
+
+kubectl get pv,pvc
+
+NAME                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM             STORAGECLASS   REASON   AGE
+persistentvolume/pvvol-1   1Gi        RWX            Retain           Bound    default/pvc-one                           57m
+
+NAME                            STATUS   VOLUME    CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+persistentvolumeclaim/pvc-one   Bound    pvvol-1   1Gi        RWX                           5m12s
+
+create a new deployment to use the pvc. We have added the VolumeMount and Volumes to our pod and container spec. 
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+  generation: 1
+  labels:
+    app: nginx
+  name: nginx-nfs
+  namespace: default
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: nginx
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - image: nginx
+        imagePullPolicy: Always
+        name: nginx
+        volumeMounts:         # <--- here 
+        - name: nfs-vol
+          mountPath: /opt
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      volumes:               # <-- and here
+      - name: nfs-vol
+        persistentVolumeClaim:
+          claimName: pvc-one  
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+
+
+The upshot is that all the nodes have access to the /opt/sfw directory, via the PV the Clain to the PV (PVC) and the pod requesting that mountpoint
+and volume will be 'linked' to that directory where ever it is scheduled. 
+
+Lab 8.4 Storage quotas
+
+we shall create our resources in a new namespace called small
+
+kubectl create ns small
+
+now lets recreate out PVs and PVCs in namespace small 
+
+kubectl create -f pv.yaml -n small
+persistentvolume/pvvol-1 created
+kubectl create -f pvc.yaml -n small
+persistentvolumeclaim/pvc-one created
+
+and lets put some quotas in that namespace 
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: storagequota
+spec:
+  hard:
+    persistentvolumeclaims: "5"
+    requests.storage: "50Mi"
+
+kubectl create -f storage-q.yaml -n small
+
+we can now see that set in the namespace 
+
+kubectl describe ns small
+Name:         small
+Labels:       kubernetes.io/metadata.name=small
+Annotations:  <none>
+Status:       Active
+
+Resource Quotas
+  Name:                   storagequota
+  Resource                Used   Hard
+  --------                ---    ---
+  persistentvolumeclaims  1      5
+  requests.storage        200Mi  50Mi
+
+No LimitRange resource.
+
+now lets create our deployment consuming that pvc 
+
+ kubectl create -f first.yaml -n small
+
+now lets put some data in our volume that we've claimed for this deployment in this pod.
+
+du -h /opt/sfw/
+8.0K    /opt/sfw/
+sudo dd if=/dev/zero of=/opt/sfw/bigfile bs=1M count=33
+
+du -h /opt/sfw/
+34M     /opt/sfw/
+
+kubectl delete deploy nginx-nfs -n small
+kubectl delete pvc pvc-one -n small
+
+as the default reclaim policy for this storage class and persistant claim is retain, that get set.  
+
+kubectl get pv -n small
+NAME      CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS     CLAIM           STORAGECLASS   REASON   AGE
+pvvol-1   1Gi        RWX            Retain           Released   small/pvc-one                           19m
+
+let delete and re create the pv 
+
+kubectl delete pv pvvol-1 -n small
+kubectl create -f pv.yaml -n small
+
+ands change the policy woth kubectl patch
+
+kubectl patch persistentvolume/pvvol-1 -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+
+lets create the claim again 
+
+cat pvc.yaml 
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-one
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Mi # <-- dropped to 20M due to our lower quota 
+
+kubectl create -f pvc.yaml -n small
+
+and now we can see it used 
+
+kubectl describe ns small
+Name:         small
+Labels:       kubernetes.io/metadata.name=small
+Annotations:  <none>
+Status:       Active
+
+Resource Quotas
+  Name:                   storagequota
+  Resource                Used  Hard
+  --------                ---   ---
+  persistentvolumeclaims  1     5
+  requests.storage        20Mi  50Mi
+
+No LimitRange resource.
+
+kubectl describe resourcequota -n small
+Name:                   storagequota
+Namespace:              small
+Resource                Used  Hard
+--------                ----  ----
+persistentvolumeclaims  1     5
+requests.storage        20Mi  50Mi
+
+
+====================================================================
+Monday 6th Febuary 2023
+====================================================================
+
+Section 9 - Services
+
+
+Lab 9.1 Deploy a new Service 
+
+Expore ServiceTypes ClusterIP, NodePort, LoadBalancer and ExternalName 
+
+Lets create a deployment 
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx
+    system: secondary
+  name: nginx-one
+  namespace: accounting
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 2
+  selector:
+    matchLabels:
+      system: secondary
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        system: secondary
+    spec:
+      containers:
+      - image: nginx:1.20.1
+        imagePullPolicy: Always
+        name: nginx
+        ports:
+        - containerPort: 80
+          protocol: TCP
+      nodeSelector:
+        system: secondOne
+
+and the a namespace for it to live in called accounting 
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    kubernetes.io/metadata.name: accounting
+  name: accounting
+spec:
+  finalizers:
+  - kubernetes
+status:
+  phase: Active
+
+kubectl create -f namespace.yaml 
+kubectl create -f nginx-one.yaml
+
+kubectl get pods -n accounting
+NAME                         READY   STATUS    RESTARTS   AGE
+nginx-one-575f648647-7mqlh   0/1     Pending   0          3s
+nginx-one-575f648647-z7nm5   0/1     Pending   0          3s
+
+notive the pending status, in the deployemtn yaml we added the spec item node selector, with a key:value label.
+If we label one of the nodes with this key:valiue nit will schedule the pod there.
+
+      nodeSelector:
+        system: secondOne
+
+kubectl label node k8swnode01 system=secondOne
+kubectl get pods -n accounting
+NAME                         READY   STATUS    RESTARTS   AGE
+nginx-one-575f648647-7mqlh   1/1     Running   0          4m11s
+nginx-one-575f648647-z7nm5   1/1     Running   0          4m11s
+
+Now lets expose the deployment... nore its set to tcp/80 in the deployment spec 
+
+kubectl expose deployment nginx-one -n accounting 
+service/nginx-one exposed
+
+kubectl get ep -n accounting
+NAME        ENDPOINTS                         AGE
+nginx-one   10.244.222.1:80,10.244.222.2:80   15s
+
+two pods, so two eps on port 80
+
+A service has also been created with the default clusterIP which is internal. Notice there is a label pair system=secondary on the ep, deploy, pods and service 
+
+kubectl get svc,ep,deploy,pods -n accounting --show-labels
+NAME                TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE    LABELS
+service/nginx-one   ClusterIP   10.99.158.62   <none>        80/TCP    8m7s   app=nginx,system=secondary
+
+NAME                  ENDPOINTS                         AGE    LABELS
+endpoints/nginx-one   10.244.222.1:80,10.244.222.2:80   8m7s   app=nginx,system=secondary
+
+NAME                        READY   UP-TO-DATE   AVAILABLE   AGE   LABELS
+deployment.apps/nginx-one   2/2     2            2           22m   app=nginx,system=secondary
+
+NAME                             READY   STATUS    RESTARTS   AGE   LABELS
+pod/nginx-one-575f648647-7mqlh   1/1     Running   0          22m   pod-template-hash=575f648647,system=secondary
+pod/nginx-one-575f648647-z7nm5   1/1     Running   0          22m   pod-template-hash=575f648647,system=secondary
+
+from a member of the cluster curl http://10.99.158.62:80
+curl http://10.244.222.1:80
+curl http://10.244.222.2:80
+
+all return the nginx welcome page 
+
+
+Lab 9.2 - Configure a NodePort 
+
+lets expose the existing nginx-one deployment as a nodeport with a new name called service-lab 
+
+kubectl expose deployment nginx-one --type=NodePort --name=service-lab -n accounting
+
+ubectl get svc,ep,deploy,pods -n accounting --show-labels
+NAME                  TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)        AGE   LABELS
+service/nginx-one     ClusterIP   10.99.158.62     <none>        80/TCP         24m   app=nginx,system=secondary
+service/service-lab   NodePort    10.106.166.138   <none>        80:30932/TCP   51s   app=nginx,system=secondary
+
+NAME                    ENDPOINTS                         AGE   LABELS
+endpoints/nginx-one     10.244.222.1:80,10.244.222.2:80   24m   app=nginx,system=secondary
+endpoints/service-lab   10.244.222.1:80,10.244.222.2:80   51s   app=nginx,system=secondary
+
+NAME                        READY   UP-TO-DATE   AVAILABLE   AGE   LABELS
+deployment.apps/nginx-one   2/2     2            2           38m   app=nginx,system=secondary
+
+NAME                             READY   STATUS    RESTARTS   AGE   LABELS
+pod/nginx-one-575f648647-7mqlh   1/1     Running   0          38m   pod-template-hash=575f648647,system=secondary
+pod/nginx-one-575f648647-z7nm5   1/1     Running   0          38m   pod-template-hash=575f648647,system=secondary
+
+Nodeport is using tcp/30932 
+
+from a machine outside the cluster we can reach into the nginx application 
+
+stephen.peters@stephens-MacBook-Pro terraform % (curl http://127.0.0.1:8080) curl http://10.0.2.118:30932
+
+Lab 9.3 coreDNS
+
+create a new pod for testing in the cluster, our base container image will be the ubuntu 
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ubuntu
+  labels:
+    os: ubuntu
+spec:
+  containers:
+  - name: ubuntu
+    image: ubuntu:latest
+    command: ["sleep" ]
+    args: ["infinity" ]
+
+kubectl create -f pod-ubuntu.yaml 
+
+kubectl get pods -A -l os=ubuntu
+NAMESPACE   NAME     READY   STATUS    RESTARTS   AGE
+default     ubuntu   1/1     Running   0          35s
+
+# to use the image running in the cluster exec an i(nteractive) t(erminal) to the pod name and run the shell with -- /bin/bash/
+
+kubectl exec -it ubuntu -- /bin/bash
+
+root@ubuntu:/#
+root@ubuntu:/# apt-get update 
+root@ubuntu:/# apt-get install curl dnsutils -y # install curl and the ability to run 'dig'
+root@ubuntu:/#dig # will state our resolver 10.96.0.10 and all the root servers out there
+root@ubuntu:/#cat /etc/resolve.conf # will state the resolver seen above and the search domains --> default.svc.cluster.local svc.cluster.local cluster.local
+root@ubuntu:/#dig @10.96.0.10 -x 10.96.0.10 +short # gives us the PTR record for the resolver 
+root@ubuntu:/#curl service-lab.accounting.svc.cluster.local. 
+
+# In the previous LAB we exposed our deployment nginx-one in the namespace accounting, we made it NodePort and called it service-lab
+
+kubectl get svc service-lab -n accounting
+NAME          TYPE       CLUSTER-IP       EXTERNAL-IP   PORT(S)        AGE
+service-lab   NodePort   10.106.166.138   <none>        80:30932/TCP   15h
+packer@k8scnode01:~$ kubectl get ep service-lab -n accounting
+NAME          ENDPOINTS                         AGE
+service-lab   10.244.222.1:80,10.244.222.2:80   15h
+
+# back on the ubuntu pod
+
+root@ubuntu:/#curl http://service-lab:80 --> curl: (6) Could not resolve host: service-lab
+
+
+root@ubuntu:/#curl http://service-lab.accounting:80 --> HTTP/1.1 200 OK # we can access the resource with a name and accross namespaces 
+root@ubuntu:/#exit
+
+# /etc/resolve.conf in the ubuntu image gave us the resolver of 10.96.0.10, we can see that as a service type ClusterIP in the kube-system namespace 
+# its using listening on ports UDP/53 TCP/53 and TCP/9153
+
+kubectl get service -n kube-system 
+
+NAME       TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)                  AGE
+kube-dns   ClusterIP   10.96.0.10   <none>        53/UDP,53/TCP,9153/TCP   33h
+
+with a deeper look we can see labels and a selector 
+
+ labels:
+    k8s-app: kube-dns
+    kubernetes.io/cluster-service: "true"
+    kubernetes.io/name: CoreDNS
+
+  selector:
+    k8s-app: kube-dns
+
+#there are 2 pods linked with that label
+
+kubectl get pods -l k8s-app=kube-dns -n kube-system
+NAME                       READY   STATUS    RESTARTS   AGE
+coredns-78fcd69978-8px7h   1/1     Running   0          2d
+coredns-78fcd69978-dqdj2   1/1     Running   0          2d
+
+#A deeper look highlights these config items --> a conf file, a volume mount and a volume as a configmap using a configmap called coredns 
+
+kubectl get pod coredns-78fcd69978-8px7h -n kube-system -o yaml
+
+spec:
+  containers:
+  - args:
+    - -conf
+    - /etc/coredns/Corefile
+    image: k8s.gcr.io/coredns/coredns:v1.8.4
+
+    volumeMounts:
+    - mountPath: /etc/coredns
+      name: config-volume
+      readOnly: true
+
+  volumes:
+  - configMap:
+      defaultMode: 420
+      items:
+      - key: Corefile
+        path: Corefile
+      name: coredns
+    name: config-volume
+
+#Lets look deep into the config map and we see the data we are after called 'Corefile'
+
+kubectl get cm coredns -n kube-system -o yaml
+
+apiVersion: v1
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+           lameduck 5s
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           fallthrough in-addr.arpa ip6.arpa
+           ttl 30
+        }
+        prometheus :9153
+        forward . /etc/resolv.conf {
+           max_concurrent 1000
+        }
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+kind: ConfigMap
+metadata:
+  creationTimestamp: "2023-02-06T08:14:19Z"
+  name: coredns
+  namespace: kube-system
+~ 
+
+#With the next testing we are going to change the config map and add a rewrite to redirect .test.io to .cluster.local
+
+~ 
+Corefile: |
+    .:53 {
+        rewrite stop {
+           name regex (.*)\.test\.io {1}.default.svc.cluster.local
+           answer name (.*)\.default\.svc\.cluster\.local {1}.test.io
+           }
+        errors
+        health {
+           lameduck 5s
+        }
+~ 
+
+#lets delete the pods, so they respawn from the Deployment/coredns
+
+kubectl delete pods -l k8s-app=kube-dns -n kube-system
+
+#To test all this DNS rework lets create another nginx deployment in the default NS (same as the ubuntu pod) and expose it as ClusterIP on Port 80 
+
+kubectl create deployment nginx --image=nginx
+kubectl expose deployment nginx --type=ClusterIP --port=80
+
+kubectl get svc 
+NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP   2d1h
+nginx        ClusterIP   10.110.159.68   <none>        80/TCP    2m57s
+
+#and now go back to the ubuntu image 
+
+root@ubuntu:/# dig -x 10.110.159.68 +short  # notice the query against the cluster IP of the nginx service 
+nginx.default.svc.cluster.local.
+root@ubuntu:/# dig nginx.default.svc.cluster.local. +short # notice the query against the fqdn of the nginx service 
+10.110.159.68
+root@ubuntu:/# dig nginx.test.io +short
+10.110.159.68
+
+#So the rewrite to the config map makes changes to the coredns file contents that gets dropped in to the file /etc/coredns/Corefile
+#and in tunr manipulated the way corecns will /etc/resolve.conf
+
+LAB 9.4 labels
+
+#we used label several times in this section here are some examples.
+
+kubectl delete pods -l k8s-app=kube-dns -n kube-system
+kubectl -n accounting get deploy --show-labels
+kubectl label node k8swnode02 mylabel=steve
+kubectl get node --show-labels 
+ kubectl get node -l mylabel=steve
+NAME         STATUS   ROLES    AGE    VERSION
+k8swnode02   Ready    <none>   2d1h   v1.22.1
+kubectl label node k8swnode02 mylabel- # Notice the - at the end of the label name 
+packer@k8scnode01:~$ kubectl get node -l mylabel=steve
+No resources found
+
+
+====================================================================
+Saturday 18th Febuary 2023
+====================================================================
+
+Section 10 - Helm
+
+once installed as a binanry, via a downloaded tar file, from helm can search the hub and interact repositories.
+
+helm search hub redis 
+
+helm repo add bitnami https://<url>
+helm repo list
+helm search repo bitnami 
+
+Once you know what you awant you can deploy a chart.
+
+helm fetch bitnami/apache --untar 
+cd apache 
+ls -rtla 
+
+helm install <application name> 
+
+LAB 10.1
+
+#On the control node install the helm binary via wget 
+
+wget https://get.helm.sh/helm-v3.9.2-linux-amd64.tar.gz
+tar -xvf helm-v3.9.2-linux-amd64.tar.gz
+
+#now lets move the binary to a location under $PATH
+
+sudo cp linux-amd64/helm /usr/local/bin/helm
+
+#lets search the main artifacthub, there will be a few results 
+
+helm search hub database
+helm search hub echo-server -o yaml #notice the url we'll need to add the repository.url
+
+
+#now lets add the additional repo, then update to get the latest charts 
+
+helm repo add ealenn https://ealenn.github.io/charts
+helm repo update
+helm repo list 
+helm repo remove ealenn 
+
+#there are 3 concepts we need to get familiar with:
+
+  Chart: A package of pre-configured Kubernetes resources.
+  Release: A specific instance of a chart which has been deployed to the cluster using Helm.
+  Repository: A group of published charts which can be made available to others.
+
+#let upgrade the realse of a precific instance of a chart, echo-server in this case
+helm upgrade -i tester ealenn/echo-server --debug 
+
+#that will have deployed the echo-server, lets look
+
+kubectl get pods 
+kubectl get service 
+kubectl describe service tester-echo-server
+
+# one pod, with a cluster IP and ep of pod IP and Port 80, lets curl them
+
+curl http://10.97.242.153:80 
+curl http://10.244.222.1:80
+
+<we get some json back>
+
+#lets list, then unistall the release
+
+helm list -a
+helm unistall tester 
+helm list -a 
+
+#in one of the earlier steps we upgraded the package, this downloaded the chart to a specific place on the node/server
+
+find $HOME -name *echo*
+/home/packer/.cache/helm/repository/echo-server-0.5.0.tgz
+
+#we can then look in that tarball
+
+tar -xvf /home/packer/.cache/helm/repository/echo-server-0.5.0.tgz 
+
+#now we can look at the values file, these key:values will populate the manifests 
+cat values.yaml
+
+#currently we have one repon added
+
+helm repo list 
+NAME    URL                            
+ealenn  https://ealenn.github.io/charts
+
+#lets add anoyher
+
+helm repo add bitnami https://charts.bitnami.com/bitnami
+
+helm repo list
+NAME    URL                               
+ealenn  https://ealenn.github.io/charts   
+bitnami https://charts.bitnami.com/bitnami
+
+#and search it for the chart we want
+
+helm search repo bitnami/apache 
+NAME            CHART VERSION   APP VERSION     DESCRIPTION                                       
+bitnami/apache  9.2.16          2.4.55          Apache HTTP Server is an open-source HTTP serve...
+
+#lets fetch, untar and go into the folder with the files in. Then install the chart. Helm will look for the files it needs from the dit it is being run from
+
+helm fetch bitnami/apache --untar
+cd apache/
+helm install steveweb .
+
+kubectl get svc --namespace default -w steveweb-apache
+NAME              TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
+steveweb-apache   LoadBalancer   10.101.166.59   <pending>     80:32145/TCP,443:30442/TCP   7m13s
+
+kubectl get svc steveweb-apache --namespace default -o yaml
+
+~ 
+spec:
+  allocateLoadBalancerNodePorts: true
+  clusterIP: 10.101.166.59
+  clusterIPs:
+  - 10.101.166.59
+~ 
+  ports:
+  - name: http
+    nodePort: 32145
+    port: 80
+    protocol: TCP
+    targetPort: http
+  - name: https
+    nodePort: 30442
+    port: 443
+    protocol: TCP
+    targetPort: https
+  selector:
+    app.kubernetes.io/instance: steveweb
+    app.kubernetes.io/name: apache
+  sessionAffinity: None
+  type: LoadBalancer
+~ 
+
+kubectl get ep steveweb-apache --namespace default 
+NAME              ENDPOINTS                             AGE
+steveweb-apache   10.244.222.2:8443,10.244.222.2:8080   18m
+
+curl -k https://10.101.166.59:443 # <--- cluster Ip and Cluster Port
+<html><body><h1>It works!</h1></body></html>
+curl -k https://127.0.0.1:30442 # <--- VM IP and exposed external NodePort 
+<html><body><h1>It works!</h1></body></html>
+curl -k https://10.244.222.2:8443  # <--- POD IP and POD PORT
+<html><body><h1>It works!</h1></body></html>
+
+#uninstall
+helm uninstall steveweb 
+
+
+Section 11 - Ingress 
+
+
+Lab 11.1 - Service Mesh addiung functionality to standard ingress of many services behing one exposed port. Service Meshes are offered from linkerd, istio and contout adn apsen 
+
+#lets test this out using linkerd, download the scrips from linkard
+
+curl -sL run.linkerd.io/install | sh
+export PATH=$PATH:/home/packer/.linkerd2/bin
+echo "export PATH=$PATH:/home/student/.linkerd2/bin" >> $HOME/.bashrc
+linkerd check --pre                             # validate that Linkerd can be installed
+linkerd install --crds | kubectl apply -f -     # install the control plane into the 'linkerd' namespace
+linkerd install --set proxyInit.runAsRoot=true | kubectl apply -f -
+linkerd check                                  # validate everything worked!
+linkerd viz install | kubectl apply -f -      # viz manages the linkerd-viz extension of Linkerd service mesh
+linkerd viz dashboard &                           # launch the dashboard
+
+#now things get complicated. Running the dashboard states that its listeing on port 50750 / for linkerd and /grafana for grafana.
+#however, as we are running behind NAT and need to expose out service as NodePort instead of ClusterIP we need to make some changes.
+#not sure how port 50750 gets link to this. 
+#we need edit the deployment called web in ns linkerd-viz and change the container args from this
+
+- -enforced-host=^(localhost|127\.0\.0\.1|web\.linkerd-viz\.svc\.cluster\.local|web\.linkerd-viz\.svc|\[::1\])(:\d+)?$
+
+#to this
+
+- -enforced-host=
+
+#then change the web service to be a NodePort instead of ClusterIP and give the nodePort a port eg 31500. once updated we can reach that from outside the cluster
+#in my set up i need to portforward 8080 --> 31500 on the vbox.
+
+from chrome on the macbook http://127.0.0.1:8080    --> the portforward port to 31500.  # we should see the linkerd UI
+
+#next lets redeploy nginx-one from a previous lab 
+
+kubectl create ns accounting
+kubectl apply -f nginx-one.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx
+    system: secondary
+  name: nginx-one
+  namespace: accounting
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 2
+  selector:
+    matchLabels:
+      system: secondary
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        system: secondary
+    spec:
+      containers:
+      - image: nginx:1.20.1
+        imagePullPolicy: Always
+        name: nginx
+        ports:
+        - containerPort: 80
+          protocol: TCP
+      nodeSelector:
+        system: secondOne
+
+#notice the node selector system: secondOne  --> we need to add that label to one of the nodes to get it to schedule and not stay pending
+
+kubectl label node k8swnode01 system=secondOne
+kubectl get pods -n accounting
+NAME                         READY   STATUS    RESTARTS   AGE
+nginx-one-575f648647-8tvqf   1/1     Running   0          13m
+nginx-one-575f648647-lctvd   1/1     Running   0          13m
+
+#now can inject it into linkerd via this command
+
+kubectl -n accounting get deploy nginx-one -o yaml | linkerd inject - | kubectl apply -f - # passes the deploy yaml to linkard inject, then applies
+
+#generate some traffic
+
+NAME        TYPE       CLUSTER-IP    EXTERNAL-IP   PORT(S)        AGE
+nginx-one   NodePort   10.97.148.6   <none>        80:31600/TCP   3m49s
+
+curl http://10.97.148.6:80
+curl http://10.0.2.124:31600
+
+#on the linkard UI the namespace accounting should show metric
+
+#lets scale the pods
+
+kubectl -n accounting scale deploy nginx-one --replicas=5
+
+Lab 11.2 - Ingress Controller - using HELM
+
+#we need two deployments, web-one and web-two, one httpd and one nginx, expose as ClusterIP 
+
+kubectl create deployment web-one --image=nginx --replicas=2
+kubectl create deployment web-two --image=httpd --replicas=2
+kubectl expose deployment web-one --type=ClusterIP --name=web-one --port=80 #note we need to set the port with ClusterIP
+kubectl expose deployment web-two --type=ClusterIP --name=web-two --port=80 #note we need to set the port with ClusterIP
+
+#using helm we want to deploy an ingress controller. Lets search the main 'hub' repo 
+
+helm search hub ingress-nginx
+helm search hub ingress-nginx -o yaml # to find the repo url
+
+- app_version: 1.6.4
+  description: Ingress controller for Kubernetes using NGINX as a reverse proxy and
+    load balancer
+  repository:
+    name: ingress-nginx
+    url: https://kubernetes.github.io/ingress-nginx
+  url: https://artifacthub.io/packages/helm/ingress-nginx/ingress-nginx
+
+#now lets add the repo from the URL, see thats its listed and update it.
+
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo list
+
+NAME            URL                                       
+ingress-nginx   https://kubernetes.github.io/ingress-nginx
+
+helm repo update
+
+#list the charts in that repo (or just the most recent)
+
+helm search repo -l
+helm search repo
+
+#now we have the repo added and updartes, lets 'fetch' the chart we need 
+
+helm fetch ingress-nginx/ingress-nginx --untar # as seen in a previous lab, this will unpack the tape archive into
+                                               # its own folder called ingress-nginx
+
+#The values file holds the key values that populate the templates. We want a daemon set instead of Deployment, so lets edit 
+
+cd ingress-nginx
+vi values.yaml
+
+#line 169
+
+    # -- Use a `DaemonSet` or `Deployment`
+    kind: DaemonSet # <---- Change from Deployment to DaemonSet
+    # -- Annotations to be added to the controller Deployment or DaemonSet
+    ##
+    annotations: {}
+    #  keel.sh/pollSchedule: "@every 60m"
+
+
+helm install myingress .
+
+kubectl --namespace default get services -o wide [-w] # use the -w flag to 'watch' it apper 
+
+kubectl get pods -A -l app.kubernetes.io/name=ingress-nginx
+
+NAMESPACE   NAME                                       READY   STATUS    RESTARTS   AGE
+myingress-ingress-nginx-controller-4m8hs   1/1     Running   0          29m
+myingress-ingress-nginx-controller-8mldk   0/1     Evicted   0          11m #don't worry, the node is low on disk space
+myingress-ingress-nginx-controller-f2ptt   1/1     Running   0          11m
+
+#lets create and apply the ingress 
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-test
+  annotations:
+    kubernetes.io/ingress.class: nginx
+  namespace: default
+spec:
+  rules:
+  - host: www.external.com
+    http:
+     paths:
+     - backend:
+         service:
+           name: web-one
+           port:
+             number: 80
+       path: /
+       pathType: ImplementationSpecific
+status:
+  loadBalancer: {}
+
+# our rule state HTTP gets to Host: www.external.com will route to service web-one on port 80
+
+kubectl apply -f ingress-test.yaml 
+
+#lets look at the new ingress rule, the back end pods and ingress service
+
+kubectl get ingress
+NAME           CLASS    HOSTS              ADDRESS   PORTS   AGE
+ingress-test   <none>   www.external.com             80      5m23s
+
+get pods -o wide | grep ingress
+myingress-ingress-nginx-controller-4m8hs   1/1     Running   0          40m     10.244.222.40   k8swnode01   <none>           <none>
+
+kubectl get svc | grep ingress-nginx
+myingress-ingress-nginx-controller             LoadBalancer   10.110.37.223    <pending>     80:30088/TCP,443:32721/TCP   41m
+myingress-ingress-nginx-controller-admission   ClusterIP      10.104.104.138   <none>        443/TCP                      41m
+
+curl http://10.244.222.40:80 # <-- http 404
+curl http://10.110.37.223:80 # <-- http 404
+curl -H "Host: www.external.com" http://10.110.37.223:80 # http 200 OK
+
+# lets inject this ingress into linkerd service mesh
+
+kubectl get daemonset myingress-ingress-nginx-controller -o yaml | linkerd inject --ingress - | kubectl apply -f - 
+
+# in linkerd Top / ns Default / Resource ds/myingress-ingress-nginc-controller / start
+# curl the ingress svc IP:PORT lots and we'll see lots of stats
+
+# next lets add another rule to point to the other web server deployement, web-two. We'll edit index.html in web-two so we can see the differnt response
+
+kubectl exec -it web-two-548c4ccddc-5m6f8 app=web-two -- /bin/bash
+
+root@web-two-548c4ccddc-5m6f8:/usr/local/apache2/htdocs vi index.html # <-- change the text to your liking
+
+# add the new rule
+
+spec:
+  rules:
+  - host: www.external.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: web-one
+            port:
+              number: 80
+        path: /
+        pathType: ImplementationSpecific
+  - host: www.kane.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: web-two
+            port:
+              number: 80
+        path: /
+        pathType: ImplementationSpecific
+
+
+curl -H "Host: www.external.com" http://10.110.37.223:80
+curl -H "Host: www.kane.com" http://10.110.37.223:80
+
+#notice the two different web content.
+
+
+
+
+====================================================================
+Sunday 19th Febuary 2023
+====================================================================
+
+Section 12 - Scheduling 
+
+LAB 12.1 - Assign PODs using Labels 
+
+# list our nodes, node labels ans taints on the nodes
+
+kubectl get nodes 
+kubectl describe nodes | grep -i labels -A5 
+
+abels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=k8scnode01
+                    kubernetes.io/os=linux
+                    node-role.kubernetes.io/control-plane=
+--
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=k8swnode01
+                    kubernetes.io/os=linux
+                    system=secondOne
+--
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=k8swnode02
+                    kubernetes.io/os=linux
+Annotations:        kubeadm.alpha.kubernetes.io/cri-socket: /var/run/dockershim.sock
+
+kubectl describe nodes | grep 'Taints:' 
+
+kubectl describe nodes | grep 'Taints:' 
+Taints:             <none>
+Taints:             <none>
+Taints:             node.kubernetes.io/disk-pressure:NoSchedule
+
+# there are 33-1=32 pods running on all the nodes
+kubectl get pods -A | wc -l
+33
+ 
+ #lets add some labels to some of the nodes
+
+kubectl label nodes k8scnode01 status=vip
+kubectl label nodes k8swnode01 status=other
+
+# and apply some pods with the nodeSelector set to status: vip
+
+kubectl create -f vip.yaml 
+
+# there are all running on the node k8scnode01
+
+get pods -o wide | grep vip
+vip                                        4/4     Running   0          6m22s   10.244.40.131   k8scnode01   <none>           <none>
+
+# now lets delete them, remove the nodeselector and redeploy
+# the pod can be scheduled anywhere now
+
+# lets create a new pod spec with another nodeSelector
+
+cp vip.yaml other.yaml ; sed -i s/vip/other/g other.yaml
+
+cat other.yaml | grep nodeSelector -A2 
+  nodeSelector:
+    status: other
+
+root@k8swnode01:~# sudo docker ps | grep busybox
+4156568a8479   busybox                         "sleep 1000000"          About a minute ago   Up About a minute             k8s_other4_other_default_1e8bfdf8-7c76-4d85-a699-68e293ce219f_0
+b6be462183bd   busybox                         "sleep 1000000"          About a minute ago   Up About a minute             k8s_other3_other_default_1e8bfdf8-7c76-4d85-a699-68e293ce219f_0
+d15e6ec42849   busybox                         "sleep 1000000"          About a minute ago   Up About a minute             k8s_other2_other_default_1e8bfdf8-7c76-4d85-a699-68e293ce219f_0
+4bc552e6dff8   busybox                         "sleep 1000000"          About a minute ago   Up About a minute             k8s_other1_other_default_1e8bfdf8-7c76-4d85-a699-68e293ce219f_0
+
+kubectl delete pods vip other
+
+LAB 12.2 Using Taints to control POD deployment 
+
+# lets start with a new deployment, basic nginx, 8 replicas , default ns
+
+kubectl apply -f taint-deployment.yaml
+
+# have been deployed on cnode01, some on wnode01
+
+packer@k8scnode01:~$ sudo docker ps | grep nginx.*taint-d | wc -l
+5
+
+packer@packer01:~$ sudo docker ps | grep nginx.*taint-d | wc -l
+3
+
+# Now delete the deploymnt, taint the k8swnode01 node with a PreferNoSchedule and redeploy 
+
+kubectl delete deploy taint-deployment
+kubectl taint node k8swnode01 bubba=value:PreferNoSchedule
+kubectl describe node | grep Taint
+kubectl apply -f taint-deployment.yaml
+
+kubectl describe node | grep Taint
+Taints:             <none>
+Taints:             bubba=value:PreferNoSchedule
+Taints:             node.kubernetes.io/disk-pressure:NoSchedule
+
+packer@k8scnode01:~$ sudo docker ps | grep nginx.*taint-d | wc -l
+7
+root@k8swnode01:~# sudo docker ps | grep nginx.*taint-d | wc -l
+1
+
+# Delete agsin, remove the taint 
+
+kubectl delete -f taint-deployment.yaml
+kubectl taint node k8swnode01 bubba-
+node/k8swnode01 untainted
+kubectl describe node | grep Taint
+Taints:             <none>
+Taints:             <none>
+Taints:             node.kubernetes.io/disk-pressure:NoSchedule
+
+# now re taint, but as NoSchedule
+
+kubectl taint node k8swnode01 bubba=value:NoSchedule
+kubectl apply -f taint-deployment.yaml
+
+packer@k8scnode01:~$ sudo docker ps | grep nginx.*taint-d | wc -l
+8
+root@k8swnode01:~# sudo docker ps | grep nginx.*taint-d | wc -l
+0
+
+# now none are scheduled on the tained node
+# delete the deployment and remove the taint, then re apply the deployment.
+
+kubectl delete -f taint-deployment.yaml
+kubectl taint node k8swnode01 bubba-
+kubectl apply -f taint-deployment.yaml
+
+packer@k8scnode01:~$ sudo docker ps | grep nginx.*taint-d | wc -l
+5
+root@k8swnode01:~# sudo docker ps | grep nginx.*taint-d | wc -l
+3
+
+# now add the NoExecute Taint, note all the pods have moved off the taint after deploy
+
+kubectl taint node k8swnode01 bubba=value:NoExecute
+packer@k8scnode01:~$ sudo docker ps | grep nginx.*taint-d | wc -l
+8
+root@k8swnode01:~# sudo docker ps | grep nginx.*taint-d | wc -l
+0
+
+# remove the taint again
+
+
+
+====================================================================
+Saturday 25th Febuary 2023
+====================================================================
+
+Section 13 - Logging and troubleshooting
+
+krew - plugins work with kubectl and give it you mreo features in working with the cluster. krew is a plugin package manager like apt-get or brew.
+
+# download and install krew on the node you are running kubectl from 
+
+(
+  set -x; cd "$(mktemp -d)" &&
+  OS="$(uname | tr '[:upper:]' '[:lower:]')" &&
+  ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')" &&
+  KREW="krew-${OS}_${ARCH}" &&
+  curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz" &&
+  tar zxvf "${KREW}.tar.gz" &&
+  ./"${KREW}" install krew
+)
+
+# add this line to the .bashrc on the node you are running kubectl from 
+
+export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+
+kubectl krew version
+kubectl krew update
+kubectl krew search
+kubectl krew install/unistall <plugin>
+
+run sniff (wireshare on a container in a pod 
+
+kubectl sniff $(kubectl get pods -o jsonpath='{.items[*].metadata.name}') -c $(kubectl get pod -o jsonpath='{.items[*].spec.containers[*].name}') -n default
+
+13.1 LAB - review Log File Locations 
+
+#in addation to the normal logfile output we can use journalctl ti view logs from thenodes perspective.
+
+journalctl -u kubelet | less # as kubelet runs on each node, each log is node specific 
+
+# We can fins rgw api-server-log log file.
+
+sudo find / -name "*apiserver*log"
+/var/log/containers/kube-apiserver-k8scnode01_kube-system_kube-apiserver-3ad583ad6aa010d7eacc4056281b270d60e13a59fe8a1142b55a33248cd26f79.log
+
+sudo tail /var/log/containers/kube-apiserver-k8scnode01_kube-system_kube-apiserver-3ad583ad6aa010d7eacc4056281b270d60e13a59fe8a1142b55a33248cd26f79.log
+{"log":"W0225 16:57:17.311827       1 watcher.go:229] watch chan error: etcdserver: mvcc: required revision has been compacted\n","stream":"stderr","time":"2023-02-25T16:57:17.31194658Z"}
+{"log":"W0225 17:27:43.908282       1 watcher.go:229] watch chan error: etcdserver: mvcc: required revision has been compacted\n","stream":"stderr","time":"2023-02-25T17:27:43.908729972Z"}
+{"log":"W0225 17:49:04.920385       1 watcher.go:229] watch chan error: etcdserver: mvcc: required revision has been compacted\n","stream":"stderr","time":"2023-02-25T17:49:04.920671634Z"}
+
+# other logs
+
+/var/log/calico/cni/cni.log
+
+/var/log/pods
+
+ls -rtla
+total 44
+drwxr-xr-x  3 root root   4096 Feb 25 16:07 kube-system_kube-apiserver-k8scnode01_*
+drwxr-xr-x  3 root root   4096 Feb 25 16:07 kube-system_etcd-k8scnode01_*
+drwxr-xr-x  3 root root   4096 Feb 25 16:07 kube-system_kube-scheduler-k8scnode01_*
+drwxr-xr-x  3 root root   4096 Feb 25 16:07 kube-system_kube-controller-manager-k8scnode01_*
+drwxr-xr-x  3 root root   4096 Feb 25 16:07 kube-system_kube-proxy-mf98s_3*
+drwxr-xr-x 11 root root   4096 Feb 25 16:08 .
+drwxrwxr-x 12 root syslog 4096 Feb 25 16:08 ..
+drwxr-xr-x  5 root root   4096 Feb 25 16:08 kube-system_calico-node-*
+drwxr-xr-x  3 root root   4096 Feb 25 16:08 kube-system_coredns-*
+drwxr-xr-x  3 root root   4096 Feb 25 16:08 kube-system_coredns-*
+drwxr-xr-x  3 root root   4096 Feb 25 16:08 kube-system_calico-kube-controllers-*
+
+../../0.log
+
+13.2 LAB - View Log output 
+
+kubectl logs -n kube-system kube-scheduler-k8scnode01
+
+LAB 13.3 - Adding tools for monitoring and metric 
+
+# lets start with git clonig some repos to get the rights tools in place
+# metrics-server is a scalable, efficiant source of container resource metrics fro auto-scale pipelines. 
+# It collects metrics, exposed them via apiserver (metrics API) and kubectl top commands.
+
+git clone https://github.com/kubernetes-incubator/metrics-server.git metrics-server
+
+kubectl create -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml 
+
+kubectl get pods -n kube-system | grep metrics-server
+metrics-server-cb896c4bd-d54sz           0/1     Running   0          71s
+
+# we need to make a few changes to the default deployment. Edit in the arg insecure-tls
+
+kubectl edit deployment.apps/metrics-server -n kube-system 
+
+~
+ containers:
+      - args:
+        - --cert-dir=/tmp
+        - --secure-port=4443
+        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+        - --kubelet-use-node-status-port
+        - --kubelet-insecure-tls # add this to allow insecure tls
+        - --metric-resolution=15s
+        image: k8s.gcr.io/metrics-server/metrics-server:v0.6.2
+~ 
+
+# now running with the new settings, the logs will state what port its listening on 
+
+kubectl logs metrics-server-cb896c4bd-d54sz -n kube-system
+-- or -- 
+kubectl logs -l k8s-app=metrics-server -n kube-system
+
+~
+I0225 20:26:25.786990       1 secure_serving.go:266] Serving securely on [::]:4443
+~
+
+# with metric-server installed we can look at some 'top' stats
+
+kubectl top pod --all-namespaces
+kubectl top nodes
+
+# or the exposed end point (we will need use the certs from out .kube conifig yaml file)
+
+export client=$(grep client-cert $HOME/.kube/config | cut -d" " -f 6)
+export key=$(grep client-key-data $HOME/.kube/config | cut -d" " -f 6)
+export auth=$(grep certificate-authority-data $HOME/.kube/config | cut -d" " -f 6)
+
+echo $client | base64 -d > client.pem
+echo $key | base64 -d > client-key.pem
+echo $auth | base64 -d > ca.pem
+
+curl https://k8scnode01:6443/apis/metrics.k8s.io/v1beta1/nodes --cert client.pem --key client-key.pem --cacert ./ca.pem
+curl https://k8scnode01:6443/apis/metrics.k8s.io/v1beta1/pods --cert client.pem --key client-key.pem --cacert ./ca.pem
+
+LAB 13.3 (Configure the dash board)
+
+# we will use helm again to get the charts needed for the dashboard, i'll describe the steps again.
+
+# find k8s-dashboard from the helm hub, list out the repository name and url.
+helm search hub k8s-dashboard
+helm search hub k8s-dashboard -o yaml
+helm repo add k8s-dashboard https://kubernetes.github.io/dashboard
+
+#update and list our added repo.
+helm repo update
+helm repo list
+
+# search our added repo and install the chart we want.
+helm search repo k8s-dashboard
+helm fetch k8s-dashboard/kubernetes-dashboard --untar
+
+# find and edite, if require, our values.yaml
+cd kubernetes-dashboard/
+vi values.yaml    # <--- i want NodePort instead of ClusterIP  
+
+# install the chart, with updates values.
+helm list -a # <-- not there
+helm install dashboard . 
+helm list -a # <-- now there
+
+kubectl get serviceaccounts -A
+
+# this running chart will expose the NodePort on the cluster, use the commands to quickly know what to target from the vbox NAT
+export NODE_PORT=$(kubectl get -n default -o jsonpath="{.spec.ports[0].nodePort}" services dashboard-kubernetes-dashboard)
+export NODE_IP=$(kubectl get nodes -o jsonpath="{.items[0].status.addresses[0].address}")
+echo https://$NODE_IP:$NODE_PORT/
+
+# create some RBAC
+kubectl get serviceaccounts dashboard-kubernetes-dashboard -n default -o yaml
+kubectl get serviceaccounts dashboard-kubernetes-dashboard -n default -o jsonpath='{.metadata.name}'
+kubectl get serviceaccounts dashboard-kubernetes-dashboard -n default -o jsonpath='{.secrets[0].name}'
+kubectl create clusterrolebinding dashaccess --clusterrole=cluster-admin --serviceaccount=default:dashboard-kubernetes-dashboard
+
+#using the NAT port open the dashboard
+https://127.0.0.1:8082/#/login 
+
+# get the login token
+export DASH_SECRET=$(kubectl get serviceaccounts dashboard-kubernetes-dashboard -n default -o jsonpath='{.secrets[0].name}')
+export DASH_TOKEN=$(kubectl get secrets $DASH_SECRET -n default -o jsonpath='{.data.token}' | base64 -d)
+echo $DASH_TOKEN # < -- use this here https://127.0.0.1:8082/#/login  
+
+
+
+====================================================================
+Sunday 26th Febuary 2023
+====================================================================
+
+Section 14 - Custom Resource Definitions (CRDs) and API Aggregaters (AAs)
+
+
+
+LAB 14.1 - Create a CRD 
+
+# lets look at what CRDs are available right now
+
+kubectl get crd --all-namespaces 
+NAME                                                  CREATED AT
+bgpconfigurations.crd.projectcalico.org               2023-02-25T16:07:52Z
+bgppeers.crd.projectcalico.org                        2023-02-25T16:07:52Z
+blockaffinities.crd.projectcalico.org                 2023-02-25T16:07:52Z
+caliconodestatuses.crd.projectcalico.org              2023-02-25T16:07:52Z
+~ 
+
+# the current CRDs were added by calico.yaml when we initialised the cluster 
+# lets add our own
+
+cat crd.yaml 
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+# name must match the spec fields below, and be in the form: <plural>.<group>
+  name: crontabs.stable.example.com
+spec:
+~ 
+
+kubectl create -f crd.yaml 
+kubectl get crd crontabs.stable.example.com
+NAME                          CREATED AT
+crontabs.stable.example.com   2023-02-26T15:51:56Z
+
+kubectl describe crd crontabs.stable.example.com
+# this is our new API Resource created by a CRD, lets use it!
+
+apiVersion: "stable.example.com/v1"
+kind: CronTab
+metadata:
+  name: new-cron-object
+spec:
+  cronSpec: "*/5 * * * *"
+  image: some-cron-image
+
+
+kubectl create -f crontab-crd.yaml 
+kubectl get crontab
+kubectl get ct
+kubectl describe ct
+kubectl delete crontab new-cron-object
+kubectl get ct
+
+
+
+Section 15 - Security 
+
+
+
+LAB 15.1 - Working with tls
+
+part of authentication of a user, using TLS x509 certificates. Authentiate properly or be treated as an anonymous userbob.pem
+
+# lets start by looking at kubelet 
+
+systemctl status kubelet.service 
+
+# as we've seem earlier, the kubelet binary runs with lots of flags pointing various files.
+
+ CGroup: /system.slice/kubelet.service
+             └─4413 /usr/bin/kubelet --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf --config=/var/lib/kubelet/config.yaml --network-plugin=cni --pod-infra-container-image=k8s.gcr.io/pause:3.5
+
+# kubelet config is here  
+
+/var/lib/kubelet/config.yaml
+
+# the kubeconfig for API auth is here 
+
+/etc/kubernetes/kubelet.conf
+
+# kube-apiserver.yaml, kube-scheduler.yaml, kube-controller-manager.yaml and etcd.yaml are found here.
+
+/etc/kubernetes/manifests
+
+# and point to certificates needed from here.
+
+/etc/kubernetes/pki/
+
+ls -rtla
+total 68
+-rw------- 1 root root 1675 Feb 25 16:07 ca.key
+-rw-r--r-- 1 root root 1099 Feb 25 16:07 ca.crt
+-rw------- 1 root root 1679 Feb 25 16:07 apiserver.key
+-rw-r--r-- 1 root root 1285 Feb 25 16:07 apiserver.crt
+-rw------- 1 root root 1675 Feb 25 16:07 apiserver-kubelet-client.key
+-rw-r--r-- 1 root root 1164 Feb 25 16:07 apiserver-kubelet-client.crt
+-rw------- 1 root root 1675 Feb 25 16:07 front-proxy-ca.key
+-rw-r--r-- 1 root root 1115 Feb 25 16:07 front-proxy-ca.crt
+-rw------- 1 root root 1679 Feb 25 16:07 front-proxy-client.key
+-rw-r--r-- 1 root root 1119 Feb 25 16:07 front-proxy-client.crt
+drwxr-xr-x 2 root root 4096 Feb 25 16:07 etcd
+-rw------- 1 root root 1679 Feb 25 16:07 apiserver-etcd-client.key
+-rw-r--r-- 1 root root 1155 Feb 25 16:07 apiserver-etcd-client.crt
+-rw------- 1 root root  451 Feb 25 16:07 sa.pub
+-rw------- 1 root root 1679 Feb 25 16:07 sa.key
+
+# lets look at some secrets
+
+kubectl get secrets -n kube-system -o wide | grep certificate-controller
+certificate-controller-token-jjkw8               kubernetes.io/service-account-token   3      25h
+
+kubectl get secrets certificate-controller-token-jjkw8 -n kube-system -o yaml
+
+# kubectl config can be used to view and even update parameters 
+
+kubectl config view 
+kubectl config set-credentials -h
+
+
+LAB 15.2 Authentication and authorization 
+
+# create two new namespaces and look at our current context
+
+kubectl create ns development
+kubectl create ns production
+kubectl config get-contexts
+
+CURRENT   NAME                          CLUSTER      AUTHINFO           NAMESPACE
+*         kubernetes-admin@kubernetes   kubernetes   kubernetes-admin   
+
+# let's create some users to support roll based access, each users will have certificates signed by the cluster root.
+
+sudo useradd -s /bin/bash DevDan
+sudo passwd DevDan
+New password: 
+Retype new password: 
+passwd: password updated successfully
+
+# i used lftr@in as the password
+# create a private key, and get a csr using that key, then sign it with the cluster's root certificate 
+
+openssl genrsa -out DevDan.key 2048
+openssl req -new -key DevDan.key -out DevDan.csr -subj "/CN=DevDan/O=development"
+sudo openssl x509 -req -in DevDan.csr -CA /etc/kubernetes/pki/ca.crt -CAkey /etc/kubernetes/pki/ca.key -CAcreateserial -out DevDan.crt -days 45
+
+# all the certs are now in the /home/packer directory
+# we can set the kubectl credentials to use them 
+
+kubectl config set-credentials DevDan --client-certificate=/home/packer/DevDan.crt --client-key=/home/packer/DevDan.key
+
+# we now have another user in the kubeconfig file
+users:
+- name: DevDan
+  user:
+    client-certificate: /home/packer/DevDan.crt
+    client-key: /home/packer/DevDan.key
+- name: kubernetes-admin
+  user:
+~ 
+
+# lets create a context on the cluser called DevDAn-Context with ns development for user called DevDan
+
+kubectl config set-context DevDan-Context --cluster=kubernetes --namespace=development --user=DevDan
+
+# now lets look in that context for resources
+
+kubectl --context=DevDan-Context get pods -A
+Error from server (Forbidden): pods is forbidden: User "DevDan" cannot list resource "pods" in API group "" at the cluster scope
+
+# we can't, so lets list the contexts again
+
+kubectl config get-contexts
+CURRENT   NAME                          CLUSTER      AUTHINFO           NAMESPACE
+          DevDan-Context                kubernetes   DevDan             development
+*         kubernetes-admin@kubernetes   kubernetes   kubernetes-admin   
+
+# lets create a role and a rolebind
+
+kubectl create -f role-dev.yaml
+kubectl create -f rolebind-dev.yaml
+
+# lets run the forbidden command again and see the results, then lets create and delkete soem resources in our context
+
+kubectl --context=DevDan-Context get pods -A
+No resources found in development namespace.
+
+kubectl --context=DevDan-Context create deployment nginx --image=nginx
+deployment.apps/nginx created
+
+kubectl --context=DevDan-Context get pod
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-6799fc88d8-fdkjd   1/1     Running   0          8s
+
+kubectl --context=DevDan-Context delete deployment nginx 
+deployment.apps "nginx" deleted
+
+# lets do it all agsin for another context production, with limited actions 
+
+cp role-dev.yaml role-production.yaml
+cp rolebind-dev.yaml rolebind-prod.yaml 
+
+# make amendments, and deploy 
+
+kubectl create -f role-production.yaml 
+kubectl create -f rolebind-prod.yaml 
+
+# set the context 
+
+kubectl config set-context ProdDan-Context --cluster=kubernetes --namespace=production --user=DevDan
+kubectl --context=ProdDan-Context get pod # <-- no resources
+kubectl --context=ProdDan-Context create deploy nginx --image=inginx # <-- cant add resources 
+
+kubectl -n production describe role dev-prod
+kubectl -n development describe role developer
+
+Name:         dev-prod
+Labels:       <none>
+Annotations:  <none>
+PolicyRule:
+  Resources               Non-Resource URLs  Resource Names  Verbs
+  ---------               -----------------  --------------  -----
+  deployments             []                 []              [list get watch]
+  pods                    []                 []              [list get watch]
+  replicasets             []                 []              [list get watch]
+  deployments.apps        []                 []              [list get watch]
+  pods.apps               []                 []              [list get watch]
+  replicasets.apps        []                 []              [list get watch]
+  deployments.extensions  []                 []              [list get watch]
+  pods.extensions         []                 []              [list get watch]
+  replicasets.extensions  []                 []              [list get watch]
+packer@packer01:~$ kubectl -n development describe role developer
+Name:         developer
+Labels:       <none>
+Annotations:  <none>
+PolicyRule:
+  Resources               Non-Resource URLs  Resource Names  Verbs
+  ---------               -----------------  --------------  -----
+  deployments             []                 []              [list get watch create update patch delete]
+  pods                    []                 []              [list get watch create update patch delete]
+  replicasets             []                 []              [list get watch create update patch delete]
+  deployments.apps        []                 []              [list get watch create update patch delete]
+  pods.apps               []                 []              [list get watch create update patch delete]
+  replicasets.apps        []                 []              [list get watch create update patch delete]
+  deployments.extensions  []                 []              [list get watch create update patch delete]
+  pods.extensions         []                 []              [list get watch create update patch delete]
+  replicasets.extensions  []                 []              [list get watch create update patch delete]
+
+
+LAB 15.3 - Admission Controllers 
+
+sudo grep admission /etc/kubernetes/manifests/kube-apiserver.yaml
+
+    - --enable-admission-plugins=NodeRestriction
+
+
+
+====================================================================
+Monday 6th March 2023
+====================================================================
+
+Section 16 - High Availability
+
+One way to achieve HA inthe cluster is to run more that one control node with more than one instance of the ETCD Key:Value DataBase.
+
+The kubeadm installer can create token that allwo other control nodes to join as well as worker nodes that we have seen earlier. A quorum of nodes is acheived 
+with three instances, These etcd databased can co-lcoate within in the control nodes or be thier own instance. kubeadm creates these environments. A LB allows traffic
+to move around the cluster in a balanced way. 
+
+kubeadm flags --control-plane --certificate-key # are used to create additional control nodes (remember the two hour ttl on cluster init join tokens)
+
+none co-located etcd DBs need the 3 quorum etcd instances setting up first. kubeadm-config.yaml file can point to external etcd endpoints, but will need
+the certificate locations.
+
+LAB 16.1
+
+# Lets add 2 extra CP nodes, one worker and a proxy for LB purposes. My terraform can scale for this. Carefull on CPU and RAM, 2 CPUs and 2048 mbits RAM per nodes
+# This is an example of a join kubeadm command that get created after the kubeadm init bootstrap.   
+
+kubeadm join k8scnode01:6443 --token <TOKEN> --discovery-token-ca-cert-hash sha256:<HASH> --control-plane --certificate-key <KEY>
+
+LAB 16.2 - more detail on the tasks
+
+# build the HAproxy node
+
+sudo apt-get update
+sudo apt-get install haproxy
+
+# edit the haproxy.cfg with our additions 
+
+sudo vi /etc/haproxy/haproxy.cfg
+
+# re-start the proxy to take the additional lines in the config.
+
+sudo systemctl restart haproxy.service 
+sudo systemctl status haproxy.service
+
+# on k8scpnode01 update /etc/hosts with ip address of haproxy address instead of the cpnode01 ip address (add the port forward to get to port 9999)
+
+http://127.0.0.1:9999/stats 
+
+# update the dns on all k8s nodes to point to the HAProxy
+
+ sudo sed -i "/k8scnode01/c\10.0.2.154 k8scnode01" /etc/hosts
+
+#  on the HAproxy node remove all the comments '#' to bring in all three cnodes.
+
+backend k8sServers
+   balance roundrobin
+   server k8scnode01  10.0.2.153:6443 check  #<-- Edit these with your IP addresses, port, and hostname#   
+   server k8scnode02  10.0.2.155:6443 check  #<-- Comment out until ready
+   server k8scnode03  10.0.2.156:6443 check   #<-- Comment out until ready
+
+# and restart the service and relaod the HAProxy stats page
+
+sudo systemctl restart haproxy.service
+http://127.0.0.1:9999/stats 
+
+# there are now three servers on the list.
+# there are also 3 etcd pods, one per control node.
+
+ kubectl get pods -l component=etcd -n kube-system -o wide
+NAME              READY   STATUS    RESTARTS   AGE   IP           NODE         NOMINATED NODE   READINESS GATES
+etcd-k8scnode01   1/1     Running   0          91m   10.0.2.153   k8scnode01   <none>           <none>
+etcd-k8scnode02   1/1     Running   0          64m   10.0.2.155   k8scnode02   <none>           <none>
+etcd-k8scnode03   1/1     Running   0          60m   10.0.2.156   k8scnode03   <none>           <none>
+
+# we can access the etcd container and run some of the etcdctl commands to have a look around
+
+kubectl exec -it etcd-k8scnode01 -n kube-system -- /bin/sh
+
+sh-5.0 > ETCDCTL_API=3 etcdctl -w table --endpoints 10.0.2.153:2379,10.0.2.155:2379,10.0.2.156:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key endpoint status
+
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+|    ENDPOINT     |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+| 10.0.2.153:2379 | daf0d7efa396e46c |   3.5.0 |  3.7 MB |      true |      false |         3 |      12958 |              12958 |        |
+| 10.0.2.155:2379 | 871036db9bec948f |   3.5.0 |  3.8 MB |     false |      false |         3 |      12958 |              12958 |        |
+| 10.0.2.156:2379 | 1f671fe584ea1437 |   3.5.0 |  3.8 MB |     false |      false |         3 |      12958 |              12958 |        |
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+
+# now we can test some fail over..
+
+k8scnode01 --> sudo systemctl stop docker.socket 
+
+kubectl logs etcd-k8scnode03 -n kube-system
+
+{"level":"warn","ts":"2023-03-07T20:10:30.947Z","caller":"rafthttp/probing_status.go:68","msg":"prober detected unhealthy status","round-tripper-name":"ROUND_TRIPPER_RAFT_MESSAGE","remote-peer-id":"daf0d7efa396e46c","rtt":"10.221297ms","error":"dial tcp 10.0.2.153:2380: connect: connection refused"}
+sh-5.0 > ETCDCTL_API=3 etcdctl -w table --endpoints 10.0.2.153:2379,10.0.2.155:2379,10.0.2.156
+
+Failed to get the status of endpoint 10.0.2.153:2379 (context deadline exceeded)
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+|    ENDPOINT     |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+| 10.0.2.155:2379 | 871036db9bec948f |   3.5.0 |  3.8 MB |      true |      false |         6 |     120798 |             120798 |        |
+| 10.0.2.156:2379 | 1f671fe584ea1437 |   3.5.0 |  3.8 MB |     false |      false |         6 |     120798 |             120798 |        |
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+
+# a new leader is elected. We can see that with the output from the etcdctl command 
+
+k8scnode01 --> sudo systemctl start docker.socket 
+
+{"level":"info","ts":"2023-03-07T20:12:11.833Z","caller":"rafthttp/stream.go:249","msg":"set message encoder","from":"1f671fe584ea1437","to":"daf0d7efa396e46c","stream-type":"stream Message"}
+{"level":"info","ts":"2023-03-07T20:12:11.833Z","caller":"rafthttp/peer_status.go:53","msg":"peer became active","peer-id":"daf0d7efa396e46c"}
+{"level":"info","ts":"2023-03-07T20:12:11.833Z","caller":"rafthttp/stream.go:274","msg":"established TCP streaming connection with remote peer","stream-writer-type":"stream Message","local-member-id":"1f671fe584ea1437","remote-peer-id":"daf0d7efa396e46c"}
+{"level":"info","ts":"2023-03-07T20:12:11.840Z","caller":"rafthttp/peer_status.go:53","msg":"peer became active","peer-id":"daf0d7efa396e46c"}
+
+# notice the first etcd endpoint is back, but nor leader, no pre-empt here 
+
+sh-5.0 > ETCDCTL_API=3 etcdctl -w table --endpoints 10.0.2.153:2379,10.0.2.155:2379,10.0.2.156:2379 --cacert /etc/kubernetes/pki/etcd/ca.crt --cert /etc/kubernetes/pki/etcd/server.crt --key /etc/kubernetes/pki/etcd/server.key endpoint status
+
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+|    ENDPOINT     |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+| 10.0.2.153:2379 | daf0d7efa396e46c |   3.5.0 |  3.8 MB |     false |      false |         6 |     121709 |             121709 |        |
+| 10.0.2.155:2379 | 871036db9bec948f |   3.5.0 |  3.8 MB |      true |      false |         6 |     121709 |             121709 |        |
+| 10.0.2.156:2379 | 1f671fe584ea1437 |   3.5.0 |  3.8 MB |     false |      false |         6 |     121709 |             121709 |        |
++-----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+
+
+====================================================================
+Monday 6th March 2023
+====================================================================
+
+Prepare for the exam -
+
+Exam Resources -->  https://www.cncf.io/certification/cka/
+Canidate Handbook --> https://docs.linuxfoundation.org/tc-docs/certification/lf-handbook2  --> Linux Foundation Exams proctored using the PSI BRIDGE Proctoring Service.
+
+I need to use my laptop with camara and microphone. I think my IDE mac will be good enough --> https://helpdesk.psionline.com/hc/en-gb/articles/4409608794260--PSI-Bridge-FAQ-System-Requirements
+My mac is 12.5.1 monterey, i'll need some photo ID
+
+CKA - Available Platform is ubuntu 20.04 
+
+Resources during the exam --> https://docs.linuxfoundation.org/tc-docs/certification/certification-resources-allowed#certified-kubernetes-administrator-cka-and-certified-kubernetes-application-developer-ckad
+
+During the exam, candidates may:
+  review the Exam content instructions that are presented in the command line terminal.
+  review Documents installed by the distribution (i.e. /usr/share and its subdirectories) use the browser within the VM to access the following documentation: 
+    https://kubernetes.io/docs/ and their subdomains
+    https://kubernetes.io/blog/ and their subdomains
+    use the search function provided on https://kubernetes.io/docs/ however, they may only open search results that have a domain matching the sites listed above
+
+I won't be able to use my own bookmarks or browser, just the secure one and the links above. Try searching for stuff there.
+
+Be able to quicly find YAMl examples of all the domains ans skill items on the curricurum. Know where they are for the exam so i can quickly find them.
+
+Use a timer to help with time management. 
+
+
+
+
+
+
+

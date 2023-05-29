@@ -1,0 +1,37 @@
+#cloud-config
+#all passwords are packer with mkpasswd -m sha512
+autoinstall:
+  identity:
+    realname: packer
+    hostname: packer01
+    username: packer
+    password: $6$9lLYNzBZ$JhmPh39qnnfAebEaAbKSAYvjR7gF1totp0uIgp1FERelhgwG7ZQu7Gu2YB7aYkOLhW6aGBXXE1nZ4Dv4ZYtGP0
+  kernel:
+    package: linux-generic
+  keyboard:
+    layout: gb
+    toggle: null
+    variant: mac
+  locale: en_US.UTF-8
+  #network numbering is complicated and gets assigned by the type of added via vbox
+  #enp0s3 seems to be a MT Desktop adapter as NAT called by packer
+  #enp0s17 seems to be MT server as bridged when called by terraform
+  network:
+    ethernets:
+      enp0s3:
+        dhcp4: true
+      enp0s17:
+        dhcp4: true
+        dhcp-identifier: mac
+        #we use id: mac, so that we don't get the same IP for all VMS created from this template
+    version: 2
+  ssh:
+    allow-pw: true
+    authorized-keys: []
+    install-server: true
+  storage:
+    layout:
+      name: lvm
+  updates: security
+  version: 1
+  

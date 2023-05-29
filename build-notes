@@ -1,0 +1,316 @@
+====================================================================
+May/June 2022
+====================================================================
+
+These notes are from my learnings from using packer to build templated VMs for VirtualBox, then Terrafrom to deploy these templated VMs
+
+https://cloud.hashicorp.com/docs/packer
+
+https://learn.hashicorp.com/packer
+
+https://learn.hashicorp.com/tutorials/packer/docker-get-started-build-image?in=packer/docker-get-started
+
+This is a basic start, but install packer via the Linux method where you add the hashicorp repo, with its GPG key.
+
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+sudo apt-get update && sudo apt-get install packer
+
+Follow the tutorails, but for hashicrop i'm using the HCL format not JSON, start the config file with the packer block (what platform to interact with), build your sources (base image), provisioners (what you want to do to the base image) and what the output will be (ovf, box)
+
+virtualbox plugin --> https://github.com/hashicorp/packer-plugin-virtualbox 
+
+virtualbox builder --> https://www.packer.io/plugins/builders/virtualbox/iso
+
+preceed or autoinstall --> https://askubuntu.com/questions/1233454/how-to-preseed-ubuntu-20-04-desktop
+
+Some great examples are located here. 
+
+https://github.com/canonical/subiquity/blob/main/examples/answers-imsm.yaml
+https://github.com/taliesins/packer-baseboxes/blob/master/linux/ubuntu/http/20.04/user-data
+https://nickcharlton.net/posts/automating-ubuntu-2004-installs-with-packer.html
+https://nickhowell.uk/2020/05/01/Automating-Ubuntu2004-Images/
+
+The cloud init user-data adds a user and password, the password is encrypted ans i used mkpasswd to do that. You can  $ apt install whois  to get the mkpasswd utility
+
+https://wiki.debian.org/DebianInstaller/Preseed
+https://www.debian.org/releases/stable/example-preseed.txt
+https://www.debian.org/releases/stable/i386/apbs02.en.html#preseed-bootparms
+https://www.youtube.com/watch?v=T-nhDIfMoL8 --> example video with preceed
+
+the boot_command is a representation of the key strokes you need to break into the boot <f6> and, in our case load the autoinstall/cloud-init/user-data file (not precced in >= ubunto 20.04) that will allow the VM to boot with a basic config of accounts, passwords, interfaces and disks. Packer using virtualbox creates a HTTP web server that serves the user-data file. The timeouts and waits allow the server to catch up before the rest of the file runs/times out
+
+the lcoation of the preceed or user-data file is set in the HCL source, when using the a user-data file we also need an empty meta-data in the same location. 
+
+
+
+https://www.packer.io/docs/templates/hcl_templates/blocks/build/post-processors
+
+Post-processers allow you to do stuff after the buiod has run, package as a compressed boxed file is one example. 
+
+https://www.packer.io/docs/templates/hcl_templates/variables
+
+variables can be declared in the main hcl, in a seporate variable file or on te comand line.  
+
+Packer loads variables in the following order, with later sources taking precedence over earlier ones:
+
+Environment variables (lowest priority)
+Any *.auto.pkrvars.hcl or *.auto.pkrvars.json files, processed in lexical order of their filenames.
+Any -var and -var-file options on the command line, in the order they are provided. (highest priority)
+
+VirtualBox has a CLI that corrosponds to a few commands used in the build, 
+
+https://www.virtualbox.org/manual/ch08.html#vboxmanage-guestproperty
+
+setting the network interfaces, cpus and ram for example
+
+network modes are explained here
+
+https://www.nakivo.com/blog/virtualbox-network-setting-guide/
+
+commmands to look at the linux server post build
+
+cat /etc/netplan/00-installer-config.yaml --> interface build
+cat /var/log/installer/autoinstall-user-data --> there are some other great log files in this in this location
+
+netplan reference --> https://netplan.io/
+https://netplan.io/reference?_ga=2.25847613.1407018224.1654610866-1962189530.1652723361
+
+packer commands and  syntax
+
+$ packer init <.hcl>
+$ packer validate <.hcl>
+$ packer build -var vm_name=mycrazypackervm [-var any_other=variable]
+$ packer build -var 'vm_name=docker-control-2004' -var 'ram=4096' -var 'cpu=3' -var 'disk=10000' vbox.ubuntu.pkr.hcl
+
+
+varables need to defined in the .hcl or in their own var file, then can be over ridden at the command line if needed
+
+packer does a lot of caching, by adding PACKER_LOG=1 to the cli we get the location of that cache, then check and delete where appropreate here.
+
+$PACKER_LOG=1 packer --help
+  2022/06/27 08:30:14 [INFO] Setting cache directory: /Users/stephen.peters/.cache/packer
+
+stephen.peters@stephens-MacBook-Pro packer % tree /Users/stephen.peters/.cache/packer
+/Users/stephen.peters/.cache/packer
+├── 47de2d7266acde194681de2a24f5d76b43b452ca.iso
+├── 47de2d7266acde194681de2a24f5d76b43b452ca.iso.lock
+├── 7784a55a71d48a1e9b5c487431438fef0f19d87f.iso.lock
+└── port
+    ├── 2237
+    ├── 2278
+~~~
+
+plugin are saved here
+
+/Users/stephen.peters/.packer.d
+
+
+
+======================================
+terraform and virtualbox examples 
+======================================
+
+install terraform on linux is very simular to packer, but we'll repeat the repo additions
+
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+sudo apt-get update && sudo apt-get install terraform
+
+
+use brew install terraform to get terraform on your mac
+
+https://registry.terraform.io/providers/terra-farm/virtualbox/latest
+https://github.com/ccll/terraform-provider-virtualbox-images/releases
+https://github.com/terra-farm/terraform-provider-virtualbox/blob/main/examples/example.tf
+
+
+we run terraform from a particular directory, in the that directory we keep the .tf file. that file will declare the provider plugin we need.
+
+terraform {
+  required_providers {
+    virtualbox = {
+      source = "terra-farm/virtualbox"
+      version = "0.2.2-alpha.1"
+    }
+  }
+}
+
+
+provider "virtualbox" {
+  # Configuration options
+}
+
+=================================================================
+useful unix commands to find listening, open and attached ports.
+=================================================================
+
+
+netstat --listen
+netstat -vatn
+netstat -vaun
+lsof -i
+lsof
+lsof -iTCP -sTCP:LISTEN
+sockstat -4 -l
+
+
+======================
+terraform cli
+======================
+
+export TF_LOG="DEBUG" #set the logging level 
+export TF_LOG_PATH="where/is/my.log"
+
+terraform init
+terraform plan
+terraform validate
+terraform apply -auto-approve
+terraform refresh
+terraform destroy
+terraform state list
+terraform state pull
+terraform state show
+
+#if you want to place the output values into environment variables then try
+export k8scnode01=$(terraform output -raw k8scnode01)
+export k8swnode01=$(terraform output -raw k8swnode01)
+export k8swnode02=$(terraform output -raw k8swnode02)
+
+#of course these are linked to 
+'''
+output "k8scnode01" {
+  value = element(virtualbox_vm.control.*.network_adapter.0.ipv4_address, 0)
+}
+#
+output "k8swnode01" {
+  value = element(virtualbox_vm.work.*.network_adapter.0.ipv4_address, 0)
+}
+#
+output "k8swnode02" {
+  value = element(virtualbox_vm.work.*.network_adapter.0.ipv4_address, 1)
+}
+'''
+section of the .tf main config file.
+
+you can test the expected output values with the terraform console interaction
+tephens-MacBook-Pro:terraform stephen.peters$ terraform console
+> element(virtualbox_vm.control.*.network_adapter.0.ipv4_address, 0)
+"10.0.2.15"
+
+element() allows us to pick the same value from several vms. the ',' <number> at the end allows
+us to pick the 1st, 2nd, etc index 0 = 1st, 1 = 2nd, etc. It wraps around, so if the are 3 items in the 
+list, a ,3 (0,1,2) will give is the first position again.
+
+
+
+
+
+
+these run in your terrarom working directory, however $HOME/.terraform/ is used as a cache for the images it creates.
+
+#interesting folder for vbox state and 
+/Users/stephen.peters/Library/VirtualBox/
+
+ cd /Users/stephen.peters/.terraform/virtualbox/
+ rm -rf gold/
+ rm -rf machine/
+
+#virtualbox.xml list all the registry including old hard disks. If you need to prune old disks no longer needed and if terragrom is in error due to a disk uuid mismatch them remove the disk with (using the disk uuid seen in the xml)
+
+VBoxManage closemedium disk <disk-uuid> --delete
+its also best to clean the virtualbox gold and machine folders under $HOME/.terraform/virtualbox
+
+cd /Users/stephen.peters/Library/VirtualBox/
+cat VirtualBox.xml | grep uuid
+VBoxManage closemedium disk 686200a7-fabe-4701-a721-754d22c01fec --delete 
+
+VBoxmanage unregistervm e88f955a-f61c-49e7-9512-06a80a2ec355 --delete 
+#will remove a vm
+
+#or a nifty bash script will power off and remove vms
+
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do VBoxmanage controlvm $i poweroff; sleep 2; VBoxmanage unregistervm $i --delete; done
+
+#now a nifty script to powerdown, change network settings and power back up vms
+
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do VBoxmanage controlvm $i poweroff; done
+sleep 2
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do vboxmanage modifyvm $i --nic1=natnetwork --nat-network1 NatNetwork; done
+sleep 2
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do vboxmanage startvm $i ; done
+
+
+
+#ands some guestproperties --> like yte IP addresses of the interfaces 
+VBoxmanage guestproperty enumerate 
+VBoxmanage guestproperty enumerate k8scnode01 
+VBoxmanage guestproperty get k8scnode01 
+
+VBoxmanage guestproperty get k8scnode01 "/VirtualBox/GuestInfo/Net/0/V4/IP"
+
+VBoxmanage guestproperty enumerate $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{)
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do VBoxmanage guestproperty enumerate $i; done
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do VBoxmanage guestproperty get $i /VirtualBox/GuestInfo/Net/0/V4/IP; done
+#and with node names
+for i in $(VBoxmanage list vms | awk '{print $1}' | tr -d /}{\"); do echo $i; VBoxmanage guestproperty get $i /VirtualBox/GuestInfo/Net/0/V4/IP; done
+
+
+#set port forward for Nat Network VMs
+
+for i in $(VBoxmanage list vms | awk '{print $1}' | tr -d /}{\"); do echo $i; VBoxmanage guestproperty get $i /VirtualBox/GuestInfo/Net/0/V4/IP; done
+
+#remove and re-instate portforward rules
+
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshc01
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshw01
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshw02
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete kubectl
+
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshc01:tcp:[127.0.0.1]:7022:[10.0.2.115]:22"
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshw01:tcp:[127.0.0.1]:8022:[10.0.2.114]:22"
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshw02:tcp:[127.0.0.1]:9022:[10.0.2.113]:22"
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "kubectl:tcp:[127.0.0.1]:6443:[10.0.2.110]:6443"
+
+in vbox if you expose a LoadBalance or NodePort service then point a new forward to that port.
+
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "nginx:tcp:[127.0.0.1]:8080:[10.0.2.82]:31209"
+
+
+
+apt-mark unhold kubeadm && \
+apt-get update && apt-get install -y kubeadm=1.23.0-00 && \
+apt-mark hold kubeadm
+
+kubeadm upgrade plan
+
+sudo kubeadm upgrade apply v1.23.0
+
+#drain if needed
+
+apt-mark unhold kubelet kubectl && \
+apt-get update && apt-get install -y kubelet=1.23.x-00 kubectl=1.23.x-00 && \
+apt-mark hold kubelet kubectl
+
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+---
+
+apt-mark unhold kubeadm && \
+apt-get update && apt-get install -y kubeadm=1.23.0-00 && \
+apt-mark hold kubeadm
+
+sudo kubeadm upgrade node
+
+#drain if needed
+
+apt-mark unhold kubelet kubectl && \
+apt-get update && apt-get install -y kubelet=1.23.0-00 kubectl=1.23.0-00 && \
+apt-mark hold kubelet kubectl
+
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+
+

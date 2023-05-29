@@ -1,0 +1,118 @@
+# After rebuils run these manual steps to get back to a workable environment.
+
+# change network adapter to NAT Network :-
+
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do VBoxmanage controlvm $i poweroff; done
+sleep 2
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do vboxmanage modifyvm $i --nic1=natnetwork --nat-network1 NatNetwork; done
+sleep 2
+for i in $(VBoxmanage list vms | awk '{print $2}' | tr -d /}{); do vboxmanage startvm $i ; done
+
+# get the post build IP addresses
+
+for i in $(VBoxmanage list vms | awk '{print $1}' | tr -d /}{\"); do echo $i; VBoxmanage guestproperty get $i /VirtualBox/GuestInfo/Net/0/V4/IP; done
+
+# delete old port forward
+
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshc01
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshc02
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshc03
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshw01
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshw02
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete sshp01
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete kubectl
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete nodePort
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete Linkerd
+VBoxManage natnetwork modify --netname NatNetwork --port-forward-4 delete HAProxyFrontEnd 
+
+
+# set varibles host to host ips 
+
+for i in $(VBoxmanage list vms | awk '{print $1}' | tr -d /}{\"); do export $i=$(VBoxmanage guestproperty get $i /VirtualBox/GuestInfo/Net/0/V4/IP | awk '{print $2}'); done
+
+# set the port forwaring 
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshc01:tcp:[127.0.0.1]:7022:[$k8scnode01]:22"
+#vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshc02:tcp:[127.0.0.1]:7122:[$k8scnode02]:22"
+#vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshc03:tcp:[127.0.0.1]:7222:[$k8scnode03]:22"
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshw01:tcp:[127.0.0.1]:8022:[$k8swnode01]:22"
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshw02:tcp:[127.0.0.1]:8122:[$k8swnode02]:22" 
+#vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "sshp01:tcp:[127.0.0.1]:9022:[$k8spnode01]:22"
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "kubectl:tcp:[127.0.0.1]:6443:[$k8scnode01]:6443"
+vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "nodePort:tcp:[127.0.0.1]:80:[$k8scnode01]:32222"
+#vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "Linkerd:tcp:[127.0.0.1]:8081:[$k8scnode01]:31500"
+#vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "Dashboard:tcp:[127.0.0.1]:8082:[$k8scnode01]:30773"
+#vboxmanage natnetwork modify --netname NatNetwork --port-forward-4 "HAProxyFrontEnd:tcp:[127.0.0.1]:80:[$k8spnode01]:32222"
+
+# on the master node update the host file to include the masternode entry
+
+sudo -i
+cat /etc/hosts
+
+# swap packer01 entry with the current cnode address  
+sed -i "/packer01/c\10.0.2.204 k8scnode01" /etc/hosts
+ping k8scnode01 -c 1
+
+# set the correct hostname
+
+hostnamectl set-hostname k8scnode01
+
+# set swapp off, restart docker.socket service to get systemd to take hole as the cfgroups owner
+
+swapoff -a
+systemctl stop docker.socket
+systemctl start docker.socket
+docker info | grep -i 'group driver'
+
+# run kubeadm init and note the join command need for the join workers
+
+kubeadm init --control-plane-endpoint=k8scnode01:6443 --pod-network-cidr=10.244.0.0/16  --upload-certs
+
+# move kube config and apply calico configuration - Run a regular user, so exit out of root privildges 
+
+exit
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+sudo cp /root/calico.yaml .
+kubectl apply -f calico.yaml 
+sudo apt-get install bash-completion -y
+
+# 
+# on worker nodes check values and tokens for your build
+#
+
+sudo -i
+
+sed -i "/packer01/c\10.0.2.204 k8scnode01" /etc/hosts
+ping k8scnode01 -c 1
+
+#hostnamectl set-hostname k8swnode01
+hostnamectl set-hostname k8swnode02
+
+systemctl stop docker.socket
+systemctl start docker.socket
+docker info | grep -i 'group driver'
+
+# turn off swap memory  
+
+swapoff -a
+
+# from --token will be unique for each build
+# need a new set ? kubeadm token create --print-join-command ---- on the worker 
+# worker node add
+
+
+kubeadm join k8scnode01:6443 --token ohh2so.7kp5zpd4owzae82v \
+        --discovery-token-ca-cert-hash sha256:b68da7737617189233c19beec6a372b6883667776c56a8a6709ad705313dc916
+
+# untaint the control node to allow normal pods to be schedulted there
+
+
+kubectl describe node | grep -i taint
+kubectl taint nodes --all node-role.kubernetes.io/master-
+
+# or taint 
+kubectl taint nodes --all node-role.kubernetes.io/master:NoSchedule
+
