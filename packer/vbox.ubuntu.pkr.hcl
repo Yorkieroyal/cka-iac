@@ -119,14 +119,14 @@ source "virtualbox-iso" "ubuntu" {
         "/casper/vmlinuz ",
         "initrd=/casper/initrd ",
         "autoinstall ",
-        "ds=nocloud-net;s=http://{{.HTTPIP}}:{{.HTTPPort}}/ ",
+        "ds=nocloud-net;s=http://{{.HTTPIP}}:{{.HTTPPort}}/",
         "<wait><enter><wait2>"
     ]
   communicator = "ssh"
   ssh_timeout = "15m"
   ssh_handshake_attempts = "4000"
   ssh_pty = true
-  shutdown_command = "echo 'packer' | sudo -S shutdown -P now" 
+  shutdown_command = "echo 'packer' |   sudo -S shutdown -P now" 
 }
 
 build {

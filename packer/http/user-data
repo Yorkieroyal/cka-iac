@@ -1,5 +1,5 @@
 #cloud-config
-#all passwords are packer with mkpasswd -m sha512
+#all passwords are packer with mkpasswd -m sha512 or openssl passwd -1 -stdin <<< packer
 autoinstall:
   identity:
     realname: packer
