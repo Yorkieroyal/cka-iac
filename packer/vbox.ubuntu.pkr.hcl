@@ -119,7 +119,7 @@ source "virtualbox-iso" "ubuntu" {
         "/casper/vmlinuz ",
         "initrd=/casper/initrd ",
         "autoinstall ",
-        "ds=nocloud-net;s=http://{{.HTTPIP}}:{{.HTTPPort}}/",
+        "ds=nocloud-net;s=http://{{.HTTPIP}}:{{.HTTPPort}}/ ",
         "<wait><enter><wait2>"
     ]
   communicator = "ssh"
