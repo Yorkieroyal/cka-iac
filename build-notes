@@ -221,6 +221,9 @@ these run in your terrarom working directory, however $HOME/.terraform/ is used 
 VBoxManage closemedium disk <disk-uuid> --delete
 its also best to clean the virtualbox gold and machine folders under $HOME/.terraform/virtualbox
 
+vboxmanage list hostonlyifs
+#list out some networking ino for hostonly
+
 cd /Users/stephen.peters/Library/VirtualBox/
 cat VirtualBox.xml | grep uuid
 VBoxManage closemedium disk 686200a7-fabe-4701-a721-754d22c01fec --delete 
