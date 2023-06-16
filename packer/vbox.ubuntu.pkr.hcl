@@ -93,14 +93,6 @@ source "virtualbox-iso" "ubuntu" {
   vboxmanage = [
      ["modifyvm", "{{.Name}}", "--nic1", "nat",],
      ["modifyvm", "{{.Name}}", "--nictype1", "82545EM"],
-     #the next statements are optional with extra interface types
-     #["modifyvm", "{{.Name}}", "--nic2", "hostonly"],
-     #["modifyvm", "{{.Name}}", "--nictype2", "82545EM"],
-     #["modifyvm", "{{.Name}}", "--hostonlyadapter2", "vboxnet0"],
-     #["modifyvm", "{{.Name}}", "--nic3", "bridged"],
-     #["modifyvm", "{{.Name}}", "--bridgeadapter3", "en0: Wi-Fi (Wireless)"],
-     #["modifyvm", "{{.Name}}", "--nictype3", "82545EM"],
-     #vboxmanage list hostonlyifs --> will list the network we need for the above command
      ["modifyvm", "{{.Name}}","--memory", "${var.ram}"],
      ["modifyvm", "{{.Name}}","--cpus", "${var.cpu}"],
   ]
@@ -126,7 +118,7 @@ source "virtualbox-iso" "ubuntu" {
   ssh_timeout = "15m"
   ssh_handshake_attempts = "4000"
   ssh_pty = true
-  shutdown_command = "echo 'packer' | sudo -S shutdown -P now" 
+  shutdown_command = "echo 'packer' |   sudo -S shutdown -P now" 
 }
 
 build {
@@ -147,9 +139,6 @@ build {
   }  
   post-processor "vagrant" {
       compression_level = "6"
-      #Specify the compression level, for algorithms that support it, from 1 through 9 inclusive.
-      #Typically higher compression levels take longer but produce smaller files.
-      #Defaults to 6
       output = "output/vagrant/${var.vm_name}.box"
       keep_input_artifact = false
   }

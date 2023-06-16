@@ -49,7 +49,7 @@ sudo -i
 cat /etc/hosts
 
 # swap packer01 entry with the current cnode address  
-sed -i "/packer01/c\10.0.2.204 k8scnode01" /etc/hosts
+sed -i "/packer01/c\10.0.2.207 k8scnode01" /etc/hosts
 ping k8scnode01 -c 1
 
 # set the correct hostname
@@ -85,7 +85,7 @@ sudo apt-get install bash-completion -y
 
 sudo -i
 
-sed -i "/packer01/c\10.0.2.204 k8scnode01" /etc/hosts
+sed -i "/packer01/c\10.0.2.207 k8scnode01" /etc/hosts
 ping k8scnode01 -c 1
 
 #hostnamectl set-hostname k8swnode01
@@ -103,12 +103,10 @@ swapoff -a
 # need a new set ? kubeadm token create --print-join-command ---- on the worker 
 # worker node add
 
-
-kubeadm join k8scnode01:6443 --token ohh2so.7kp5zpd4owzae82v \
-        --discovery-token-ca-cert-hash sha256:b68da7737617189233c19beec6a372b6883667776c56a8a6709ad705313dc916
+kubeadm join k8scnode01:6443 --token ujh3kq.8u7p0cc8bd8lsz5s \
+        --discovery-token-ca-cert-hash sha256:b91c47348b243e800fb303d19fadc7144d5830e91530be3483e0f934ee7cc18a
 
 # untaint the control node to allow normal pods to be schedulted there
-
 
 kubectl describe node | grep -i taint
 kubectl taint nodes --all node-role.kubernetes.io/master-

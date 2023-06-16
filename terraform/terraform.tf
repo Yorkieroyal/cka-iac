@@ -11,14 +11,13 @@ provider "virtualbox" {
   # Configuration options
 }
 
-#note: terraform stored these images in cache (.terraform/virtualbox/) to running packer agsin with updated
+#note: terraform stored these images in cache (.terraform/virtualbox/) so running packer again with updates
 #will not make the build until you delete the cache, i beleive this is called 'state'
 
 resource "virtualbox_vm" "control" {
   count = 1
   name = format("k8scnode%02d", count.index + 1)
-  #image = "https://app.vagrantup.com/ubuntu/boxes/bionic64/versions/20180903.0.0/providers/virtualbox.box"
-  image = "/Users/stephen.peters/Desktop/training/lfs258-cka/packer/output/vagrant/docker-control-2004-15G.box"
+  image = "/Users/stephen.peters/Desktop/training/lfs258-cka/cka-iac/packer/output/vagrant/docker-control-2004.box"
   cpus = 4
   memory = "4096 mib"
   user_data = file("user_data")
@@ -35,7 +34,7 @@ resource "virtualbox_vm" "control" {
 resource "virtualbox_vm" "work" {
   count = 2
   name = format("k8swnode%02d", count.index + 1)
-  image = "/Users/stephen.peters/Desktop/training/lfs258-cka/packer/output/vagrant/docker-worker-2004-15G.box"
+  image = "/Users/stephen.peters/Desktop/training/lfs258-cka/cka-iac/packer/output/vagrant/docker-worker-2004.box"
   cpus = 2
   memory = "2048 mib"
   user_data = file("user_data")
